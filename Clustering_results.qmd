@@ -1,0 +1,119 @@
+---
+title: "results_clustering"
+format: html
+---
+
+# Libraries
+
+```{r}
+library(RColorBrewer)
+
+```
+
+# Data import
+
+```{r}
+female_result <- read_xlsx(path = "Master project/merged_data_4f.xlsx")
+male_result <- read_xlsx(path = "Master project/merged_data_4m.xlsx")
+
+female_result_umap <- read_xlsx(path = "Master project/merged_data_umap_4f.xlsx")
+male_result_umap <- read_xlsx(path = "Master project/merged_data_umap_4m.xlsx")
+
+head(female_result)
+head(male_result)
+```
+
+# Data preparation
+
+```{r}
+# Change column names for plots
+names(female_result) <- c("ID", "BMI", "HbA1c", "Total.Cholesterol", "HDL.Cholesterol", "LDL.Cholesterol", "CRP", "IR", "Age", "cluster")
+names(male_result) <- c("ID", "BMI", "HbA1c", "Total.Cholesterol", "HDL.Cholesterol", "LDL.Cholesterol", "CRP", "IR", "Age", "cluster")
+names(female_result_umap) <- c("ID", "BMI", "HbA1c", "Total.Cholesterol", "HDL.Cholesterol", "LDL.Cholesterol", "CRP", "IR", "Age", "cluster")
+names(male_result_umap) <- c("ID", "BMI", "HbA1c", "Total.Cholesterol", "HDL.Cholesterol", "LDL.Cholesterol", "CRP", "IR", "Age", "cluster")
+
+```
+
+```{r}
+# replace cluster numbers with cluster names
+female_result$cluster <- ifelse(female_result$cluster == 1, "Obesity",
+                               ifelse(female_result$cluster == 2, "Lipid",
+                               ifelse(female_result$cluster == 3, "Age", NA)))
+
+male_result$cluster <- ifelse(male_result$cluster == 1, "Age",
+                               ifelse(male_result$cluster == 2, "Lipid",
+                               ifelse(male_result$cluster == 3, "Obesity", NA)))
+
+female_result_umap$cluster <- ifelse(female_result_umap$cluster == 1, "Obesity",
+                                ifelse(female_result_umap$cluster == 2, "Lipid",
+                                ifelse(female_result_umap$cluster == 3, "Age", NA)))
+
+male_result_umap$cluster <- ifelse(male_result_umap$cluster == 1, "Lipid",
+                               ifelse(male_result_umap$cluster == 2, "Obesity",
+                               ifelse(male_result_umap$cluster == 3, "Age", NA)))
+
+
+#table(female_result$cluster)
+#table(male_result$cluster)
+```
+
+# Agreement k-means & k-means + umap
+
+```{r}
+# caluclate the percentage of cluster agreements 
+same_cluster_count_f <- sum(female_result$cluster == female_result_umap$cluster)
+same_cluster_count_m <- sum(male_result$cluster == male_result_umap$cluster)
+
+same_cluster_count_f/nrow(female_result)*100
+same_cluster_count_m/nrow(male_result)*100
+```
+
+# Aggregate data + boxplots
+
+### Female
+
+```{r}
+# Summary statistics
+aggregate(female_result[,2:9], by = list(cluster = female_result$cluster), mean)
+
+# boxplots
+for (col in names(female_result)[2:9]) {
+  p <- ggplot(female_result, aes_string(x = "cluster", y = col, fill = "cluster")) +
+    geom_boxplot(color = "black", outlier.shape = 16, outlier.size = 2) +
+    labs(x = "cluster", y = col, title = col) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(hjust = 0.5),
+      axis.text = element_text(size = 12),
+      axis.title = element_text(size = 14),
+      panel.grid.major = element_line(color = "grey90"),
+      panel.grid.minor = element_blank()
+    ) +
+    scale_fill_manual(values = brewer.pal(name = "Dark2", n = length(unique(female_result$cluster))))
+  print(p)
+}
+```
+
+### Male
+
+```{r}
+# summary statistics
+aggregate(male_result[,2:9], by = list(cluster = male_result$cluster), mean)
+
+# boxplots
+for (col in names(male_result)[2:9]) {
+  p <- ggplot(male_result, aes_string(x = "cluster", y = col, fill = "cluster")) +
+    geom_boxplot(color = "black", outlier.shape = 16, outlier.size = 2) +
+    labs(x = "cluster", y = col, title = col) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(hjust = 0.5),
+      axis.text = element_text(size = 12),
+      axis.title = element_text(size = 14),
+      panel.grid.major = element_line(color = "grey90"),
+      panel.grid.minor = element_blank()
+    ) +
+    scale_fill_manual(values = brewer.pal(name = "Dark2", n = length(unique(male_result$cluster))))
+  print(p)
+}
+```

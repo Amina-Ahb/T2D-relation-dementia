@@ -1,0 +1,686 @@
+---
+title: "Objective_1"
+format: html
+editor: visual
+---
+
+# Packages
+
+```{r}
+library(readxl)     # loading in data
+library(fpc)        # 
+library(cluster)    # silhouette
+library(umap)       # umap
+library(lubridate)
+library(factoextra) # hkmeans
+library(openxlsx)   # save as xlsx
+library(ggplot2)
+library(tidyr)
+```
+
+# Data import
+
+```{r}
+
+# Uk data
+data <- suppressWarnings(read_xlsx(path = "data_master_project_3years.xlsx"))
+
+
+# Split female and male into separate groups
+male_data <- data[data$Sex == "Male",]
+female_data <- data[data$Sex == "Female",]
+
+
+# colnames(data)
+# head(data)
+```
+
+# Data pre-processing for clustering
+
+-   **\[,1\]** Identification code (ID)
+
+-   **\[, c(3, 4, 19)\]** Age; calculated from day of birth to date of diagnosis
+
+-   **\[, 67\]** BMI
+
+-   **\[, 7\]** HbA1c
+
+-   **\[, c(222**, **234**, **238)\]** Cholesterol, HDL, LDL
+
+-   **\[,256\]** Triglyceride used to calculate IR (HDL/Triglyceride)
+
+-   **\[, 218\]** C-reactive protein
+
+```{r}
+preprocess_data <- function(df) {
+  # Select clustering variables
+  subset_data <-  df[, c(1, 3, 4, 19, 67, 7, 222, 234, 238, 256, 218, 2)]
+  
+  # create numeric variables
+  subset_data[, c(1,3,5:11)] <- apply(subset_data[c(1,3,5:11)], 2, as.numeric)
+    
+  # calculate Insuline resistance (IR) value and remove triglyceride
+  subset <- data.frame(subset_data)
+  subset$IR <- subset[,10] / subset[,9]
+  subset <- subset[,-10]
+  
+  # calculate age from date of birth to date of diagnosis
+  subset[, 2] <- match(subset[, 2], month.name)
+  subset$date_of_birth <- as.Date(paste(subset[, 3], subset[, 2], 1, sep = "-"), "%Y-%m-%d")
+  subset[, 4] <- as.Date(subset[, 4])
+  subset$age_at_diagnosis <- interval(subset$date_of_birth, subset[, 4]) / years(1)
+  subset <- subset[,c(-2, -3, -4, -11, -13)]
+  
+  # complete case analysis
+  subset2 <- subset[complete.cases(subset), ]
+  
+  # Calculate the standard deviation for each column
+  std_dev <- apply(subset2[,2:9], 2, sd)
+  mean <- apply(subset2[,2:9], 2, mean)
+  
+  
+  # Remove outliers (5 * std_dev)
+  for (i in 1:ncol(subset2[, 2:9])) {
+    col <- subset2[, i + 1]
+    subset2 <- subset2[!((col > mean[i] + 5 * std_dev[i]) | (col < mean[i] - 5*std_dev[i])), ]
+}
+  
+  # apply logscale
+  subset2[,2:9] <- apply(subset2[,2:9], 2, log1p)
+  # standardize the data
+  subset2[,2:9] <- apply(subset2[,2:9], 2, scale)
+  
+  return(subset2)
+}
+
+
+# pre-process the male and female data
+female_processed <- data.frame(preprocess_data(female_data))
+male_processed <- data.frame(preprocess_data(male_data))
+```
+
+# Distributions
+
+```{r}
+for (col in names(female_processed[, 2:9])) {
+  # Create histogram for the column
+  p <- ggplot(female_processed, aes(x = .data[[col]])) +
+    geom_histogram(fill = "grey", bins = 30) +
+    ggtitle(paste("Histogram for", col))
+  
+  # Print or plot the ggplot object
+  print(p)
+}
+```
+
+```{r}
+for (col in names(male_processed[, 2:9])) {
+  # Create histogram for the column
+  p <- ggplot(male_processed, aes(x = .data[[col]])) +
+    geom_histogram(fill = "grey", bins = 30) +
+    ggtitle(paste("Histogram for", col))
+  
+  # Print or plot the ggplot object
+  print(p)
+}
+```
+
+# Data pre-processing without log and scaling
+
+For aggregating and visualizing the data
+
+```{r}
+
+plot_data <- function(df) {
+  # Select clustering variables
+  subset_data <-  df[, c(1, 3, 4, 19, 67, 7, 222, 234, 238, 256, 218)]
+  
+  # create numeric variables
+  subset_data[, c(1,3,5:11)] <- apply(subset_data[c(1,3,5:11)], 2, as.numeric)
+    
+  # add Insuline resistance (IR) value and remove triglyceride
+  subset <- data.frame(subset_data)
+  subset$IR <- subset[,10] / subset[,9]
+  subset <- subset[,-10]
+  
+  # calculate age
+  subset[, 2] <- match(subset[, 2], month.name)
+  subset$date_of_birth <- as.Date(paste(subset[, 3], subset[, 2], 1, sep = "-"), "%Y-%m-%d")
+  subset[, 4] <- as.Date(subset[, 4])
+  subset$age_at_diagnosis <- interval(subset$date_of_birth, subset[, 4]) / years(1)
+  subset <- subset[,c(-2, -3, -4, -12)]
+  
+  # complete case analysis
+  subset2 <- subset[complete.cases(subset), ]
+  
+  # Calculate the standard deviation for each column
+  std_dev <- apply(subset2[,2:9], 2, sd)
+  mean <- apply(subset2[,2:9], 2, mean)
+  
+  
+  # Remove outliers (5 * std_dev)
+  for (i in 1:ncol(subset2[, 2:9])) {
+    col <- subset2[, i + 1]  # Get the column values
+    subset2 <- subset2[!((col > mean[i] + 5 * std_dev[i]) | (col < mean[i] - 5*std_dev[i])), ]
+}
+  return(subset2)
+}
+
+
+# pre-process the male and female data
+female_plot <- data.frame(plot_data(female_data))
+male_plot <- data.frame(plot_data(male_data))
+```
+
+```{r}
+summary(female_processed)
+summary(male_processed)
+```
+
+# Set.seed
+
+```{r}
+set.seed(123)
+```
+
+# Umap
+
+```{r}
+# perform umap
+umap_result_f <- umap(female_processed[,2:9], n_neighbors = 5, min_dist = 0.15, n_components = 4)
+# Extract the resulting 4-dimensional embedding layout
+umap_embeddings_f <- umap_result_f$layout
+
+# perform umap
+umap_result_m <- umap(male_processed[,2:9], n_neighbors = 5, min_dist = 0.15, n_components = 4)
+umap_embeddings_m <- umap_result_m$layout
+# Extract the resulting 4-dimensional embedding layout
+```
+
+# Within-cluster sum of squares, Silhouette score
+
+```{r}
+fviz_nbclust(female_processed[, 2:9], kmeans, method = "wss")
+fviz_nbclust(female_processed[, 2:9], kmeans, method = "silhouette")
+fviz_nbclust(female_processed[,2:9], kmeans, method = "gap_stat")
+
+fviz_nbclust(male_processed[, 2:9], kmeans, method = "wss")
+fviz_nbclust(male_processed[, 2:9], kmeans, method = "silhouette")
+fviz_nbclust(male_processed[,2:9], kmeans, method = "gap_stat")
+```
+
+# Silhouette scores
+
+**Female:**
+
+```{r}
+# function that computes the average silhouette score for k clusters
+silhouette_score <- function(k){
+  # perform k-means clustering on columns 2 to 9
+  km <- kmeans(female_processed[, 2:9], centers = k, nstart=100, iter.max = 10000, algorithm = "Lloyd")
+  # calculate the silhouette scores for the clustering result
+  ss <- silhouette(km$cluster, dist(female_processed[, 2:9], method = "euclidean"))
+  # return the mean silhouette score
+  mean(ss[, 3])
+}
+
+# range of cluster numbers
+k <- 2:6
+
+# apply the function to each value in k and store the results
+avg_sil <- sapply(k, silhouette_score)
+# plot the average silhouette scores against the number of clusters
+plot(k, type='b', avg_sil, xlab='Number of clusters', ylab='Average Silhouette Scores - Female', frame=FALSE)
+
+abline(v = 3, lty = 2, col = "grey")
+```
+
+**Female umap:**
+
+```{r}
+# function that computes the average silhouette score for k clusters
+silhouette_score <- function(k){
+  # perform k-means clustering on columns 2 to 9
+  km <- kmeans(umap_embeddings_f, centers = k, nstart=100, iter.max = 10000, algorithm = "Lloyd")
+  # calculate the silhouette scores for the clustering result
+  ss <- silhouette(km$cluster, dist(umap_embeddings_f))
+  # return the mean silhouette score
+  mean(ss[, 3])
+}
+
+# range of cluster numbers
+k <- 2:6
+
+# apply the function to each value in k and store the results
+avg_sil <- sapply(k, silhouette_score)
+# plot the average silhouette scores against the number of clusters
+plot(k, type='b', avg_sil, xlab='Number of clusters', ylab='Average Silhouette Scores - Female', frame=FALSE)
+
+
+```
+
+**Male:**
+
+```{r}
+# function that computes the average silhouette score for k clusters
+silhouette_score <- function(k){
+  # perform k-means clustering on columns 2 to 9
+  km <- kmeans(male_processed[2:9], centers = k, nstart=100, iter.max = 10000, algorithm = "Lloyd")
+  # calculate the silhouette scores for the clustering result
+  ss <- silhouette(km$cluster, dist(male_processed[, 2:9]))
+  # return the mean silhouette score
+  mean(ss[, 3])
+}
+
+# range of cluster numbers
+k <- 2:6
+
+# apply the function to each value in k and store the results
+avg_sil <- sapply(k, silhouette_score)
+# plot the average silhouette scores against the number of clusters
+plot(k, type='b', avg_sil, xlab='Number of clusters', ylab='Average Silhouette Scores - Male', frame=FALSE)
+
+abline(v = 3, lty = 2, col = "gray")
+```
+
+**Male umap:**
+
+```{r}
+# function that computes the average silhouette score for k clusters
+silhouette_score <- function(k){
+  # perform k-means clustering on columns 2 to 9
+  km <- kmeans(umap_embeddings_m, centers = k, nstart=100, iter.max = 10000, algorithm = "Lloyd")
+  # calculate the silhouette scores for the clustering result
+  ss <- silhouette(km$cluster, dist(umap_embeddings_m))
+  # return the mean silhouette score
+  mean(ss[, 3])
+}
+
+# range of cluster numbers
+k <- 2:6
+
+# apply the function to each value in k and store the results
+avg_sil <- sapply(k, silhouette_score)
+# plot the average silhouette scores against the number of clusters
+plot(k, type='b', avg_sil, xlab='Number of clusters', ylab='Average Silhouette Scores', frame=FALSE)
+```
+
+# Gap Statistic
+
+```{r}
+
+max_k <-  6 # Maximum number of clusters to consider
+
+# Compute the gap statistic for K-means clustering with max_k clusters
+gap_stat <- clusGap(female_processed[,2:9], FUN = kmeans, nstart = 25, K.max = max_k, B = 50)
+
+# Plot the gap statistic
+fviz_gap_stat(gap_stat)
+```
+
+```{r}
+# extract gap values
+gap_values <- gap_stat$Tab[, "gap"]
+# extract standard error values
+se_values <- gap_stat$Tab[, "SE.sim"]
+
+gap_values
+se_values
+```
+
+```{r}
+# Compute the gap statistic for K-means clustering with max_k clusters
+gap_stat_m <- clusGap(male_processed[,2:9], FUN = kmeans, nstart = 25, K.max = max_k, B = 50)
+
+# Plot the gap statistic
+fviz_gap_stat(gap_stat_m)
+```
+
+```{r}
+# extract gap values
+gap_values_m <- gap_stat_m$Tab[, "gap"]
+# extract standard error values
+se_values_m <- gap_stat_m$Tab[, "SE.sim"]
+
+gap_values_m
+se_values_m
+```
+
+# —— Clustering ——
+
+## Kmeans (silhouette scores: 0.17 , 0.17)
+
+#### Female
+
+```{r}
+# apply k-means with 3 clusters
+kmeans_4f <- kmeans(female_processed[, 2:9], centers = 3, nstart = 100, iter.max = 10000)
+
+# calculate the mean of each variable stratified by clusters
+agg_km_f <- aggregate(female_plot[,2:9], by = list(cluster = kmeans_4f$cluster), mean)
+agg_km_f
+write.xlsx(agg_km_f, file = "Results/kmeans_f.xlsx")
+
+kmeans_4f$size  # get cluster size
+
+# add assigned cluster for each observation to a new column in the dataset
+cluster_4f <- data.frame(kmeans_4f$cluster)
+merged_data_4f<- cbind(female_plot, cluster_4f)
+names(merged_data_4f)[ncol(merged_data_4f)] <- "cluster"
+
+# save the new dataset
+write.xlsx(merged_data_4f, file = "Results/kmeans_data_f.xlsx")
+
+
+# Boxplots
+data_f <- data.frame(merged_data_4f)
+
+for (col in names(data_f[,2:9])) {
+  boxplot(data_f[,col] ~ data_f[,10],
+        xlab = "cluster",
+        ylab = col,
+        main = col)
+}
+
+# obtain silhouette score
+silhouette_scores4f <- silhouette(kmeans_4f$cluster, dist(female_processed[,2:9]))
+mean(silhouette_scores4f[,3])
+summary(silhouette_scores4f)
+```
+
+#### Male
+
+```{r}
+# apply k-means with 3 clusters
+kmeans_4m <- kmeans(male_processed[,2:9], centers = 3, nstart = 100, iter.max = 10000)
+
+# calculate the mean of each variable by clusters
+agg_km_m <- aggregate(male_plot[,2:9], by = list(cluster = kmeans_4m$cluster), mean)
+agg_km_m
+
+# save the new dataset
+write.xlsx(agg_km_m, file = "Results/kmeans_m.xlsx")
+
+kmeans_4m$size # get cluster size
+
+# add assigned cluster for each observation to a new column in the dataset
+cluster_4m <- data.frame(kmeans_4m$cluster)
+merged_data_4m<- cbind(male_plot, cluster_4m)
+names(merged_data_4m)[ncol(merged_data_4m)] <- "cluster"
+
+# Boxplots
+data_m <- data.frame(merged_data_4m)
+
+for (col in names(data_m[,2:9])) {
+  boxplot(data_m[,col] ~ data_m[,10], 
+        xlab = "cluster",
+        ylab = col,
+        main = col)
+}
+
+# obtain silhouette scores
+silhouette_scores4m <- silhouette(kmeans_4m$cluster, dist(male_processed[,2:9]))
+mean(silhouette_scores4m[,3])
+summary(silhouette_scores4m)
+```
+
+### With Umap (silhouette scores: 0.31 , 0.31)
+
+#### Female
+
+```{r}
+# apply kmeans to umap embeddings
+kmeans_umap_f <- kmeans(umap_embeddings_f, centers = 3, nstart = 100, iter.max = 10000)
+
+# calculate aggregate result
+agg_km_umap_f <- aggregate(female_plot[,2:9], by = list(cluster = kmeans_umap_f$cluster), mean)
+agg_km_umap_f
+
+# save the data
+write.xlsx(agg_km_umap_f, file = "Results/kmeans_umap_f.xlsx")
+
+kmeans_umap_f$size # get cluster size
+```
+
+```{r}
+# add assigned cluster for each observation to a new column in the dataset
+cluster_umap_4f <- data.frame(kmeans_umap_f$cluster)
+merged_data_umap_4f<- data.frame(cbind(female_plot, cluster_umap_4f))
+names(merged_data_umap_4f) <- c("ID", "Age", "BMI", "HbA1c", "Total_cholesterol", "HDL_cholesterol", "LDL_cholesterol", "C-reactive_protein", "IR", "cluster")
+
+
+
+# Boxplots
+for (col in names(merged_data_umap_4f[,2:9])) {
+  boxplot(merged_data_umap_4f[,col] ~ merged_data_umap_4f[,10], 
+        xlab = "cluster",
+        ylab = col,
+        main = col)
+}
+
+# obtain silhouette scores
+silhouette_scores_kumap_f <- silhouette(kmeans_umap_f$cluster, dist(umap_embeddings_f))
+mean(silhouette_scores_kumap_f[,3])
+summary(silhouette_scores_kumap_f)
+
+```
+
+#### Male
+
+```{r}
+# apply kmeans to umap embeddings
+kmeans_umap_m <- kmeans(umap_embeddings_m, centers = 3, nstart = 100, iter.max = 10000)
+
+# calculate aggregate result
+agg_km_umap_m <- aggregate(male_plot[,2:9], by = list(cluster = kmeans_umap_m$cluster), mean)
+agg_km_umap_m
+
+# save the data
+write.xlsx(agg_km_umap_m, file = "Results/kmeans_umap_m.xlsx")
+
+kmeans_umap_m$size  # get cluster size
+```
+
+```{r}
+# add assigned cluster for each observation to a new column in the dataset
+cluster_umap_4m <- data.frame(kmeans_umap_m$cluster)
+merged_data_umap_4m<- data.frame(cbind(male_plot, cluster_umap_4m))
+names(merged_data_umap_4m) <- c("ID", "Age", "BMI", "HbA1c", "Total_cholesterol", "HDL_cholesterol", "LDL_cholesterol", "C-reactive_protein", "IR", "cluster")
+
+# Boxplots
+for (col in names(merged_data_umap_4m[,2:9])) {
+  boxplot(merged_data_umap_4m[,col] ~ merged_data_umap_4m[,10], 
+        xlab = "cluster",
+        ylab = col,
+        main = col)
+}
+
+# calculate mean silhouette score
+silhouette_scores_kumap_m <- silhouette(kmeans_umap_m$cluster, dist(umap_embeddings_m))
+mean(silhouette_scores_kumap_m[,3])
+summary(silhouette_scores_kumap_m)
+```
+
+# Hierarchical K-means (silhouette scores: 0.16 , 0.17)
+
+#### Female
+
+```{r}
+# apply hierarchical kmeans 
+hkm_result_f <- hkmeans(female_processed[,2:9], k = 3, iter.max = 100)
+
+# Visualize a 2D plot
+fviz_cluster(hkm_result_f, data = female_processed[, 2:9], geom = "point", stand = FALSE)
+
+# calculate aggregate result
+agg_hkm_f <- aggregate(female_plot[,2:9], by = list(cluster = hkm_result_f$cluster), mean)
+agg_hkm_f
+
+# save the data
+write.xlsx(agg_hkm_f, file = "Results/hkm_f.xlsx")
+
+hkm_result_f$size  # get cluster size
+
+# add assigned cluster for each observation to a new column in the dataset
+cluster_hkm_f <- data.frame(hkm_result_f$cluster)
+merged_hkm_f<- data.frame(cbind(female_plot, cluster_hkm_f))
+names(merged_hkm_f)[ncol(merged_hkm_f)] <- "cluster"
+
+# Boxplot
+for (col in names(merged_hkm_f[,2:9])) {
+  boxplot(merged_hkm_f[,col] ~ merged_hkm_f[,10], 
+        xlab = "cluster",
+        ylab = col,
+        main = col)
+}
+
+# obtain silhouette score
+silh_score_hkm_f <- silhouette(hkm_result_f$cluster, dist(female_processed[,2:9]))
+mean(silh_score_hkm_f[,3])
+summary(silh_score_hkm_f)
+```
+
+#### Male
+
+```{r}
+# apply hierarchical kmeans 
+hkm_result_m <- hkmeans(male_processed[,2:9], k = 3, iter.max = 100)
+
+# Visualize a 2D plot
+fviz_cluster(hkm_result_m, data = male_processed[, 2:9], geom = "point", stand = FALSE)
+
+# calculate aggregate result
+agg_hkm_m <- aggregate(male_plot[,2:9], by = list(cluster = hkm_result_m$cluster), mean)
+agg_hkm_m
+
+# save the data
+write.xlsx(agg_hkm_m, file = "Results/hkm_m.xlsx")
+
+hkm_result_m$size  # get cluster size
+
+# add assigned cluster for each observation to a new column in the dataset
+cluster_hkm_m <- data.frame(hkm_result_m$cluster)
+merged_hkm_m <- data.frame(cbind(male_plot, cluster_hkm_m))
+names(merged_hkm_m)[ncol(merged_hkm_m)] <- "cluster"
+
+# Boxplot
+for (col in names(merged_hkm_m[,2:9])) {
+  boxplot(merged_hkm_m[,col] ~ merged_hkm_m[,10], 
+        xlab = "cluster",
+        ylab = col,
+        main = col)
+}
+
+# obtain silhouette score
+silh_score_hkm_m <- silhouette(hkm_result_m$cluster, dist(male_processed[,2:9]))
+mean(silh_score_hkm_m[,3])
+summary(silh_score_hkm_m)
+```
+
+### With Umap (silhouette scores: 0.31, 0.31)
+
+#### Female
+
+```{r}
+# apply hierarchical kmeans 
+hkm_result_umap_f <- hkmeans(umap_embeddings_f, k = 3, iter.max = 100)
+
+# Visualize a 2D plot
+fviz_cluster(hkm_result_umap_f, data = female_processed[, 2:9], geom = "point", stand = FALSE)
+
+# calculate aggregate result
+agg_hkm_umap_f <- aggregate(female_plot[,2:9], by = list(cluster = hkm_result_umap_f$cluster), mean)
+agg_hkm_umap_f
+
+# save the data
+write.xlsx(agg_hkm_umap_f, file = "Results/hkm_umap_f.xlsx")
+
+hkm_result_umap_f$size  # get cluster size
+
+# add assigned cluster for each observation to a new column in the dataset
+cluster_hkm_umap_f <- data.frame(hkm_result_umap_f$cluster)
+merged_hkm_umap_f<- data.frame(cbind(female_plot, cluster_hkm_umap_f))
+names(merged_hkm_umap_f)[ncol(merged_hkm_umap_f)] <- "cluster"
+
+# Boxplot
+for (col in names(merged_hkm_umap_f[,2:9])) {
+  boxplot(merged_hkm_umap_f[,col] ~ merged_hkm_umap_f[,10], 
+        xlab = "cluster",
+        ylab = col,
+        main = col)
+}
+
+# obtain silhouette score
+silh_score_hkm_umap_f <- silhouette(hkm_result_umap_f$cluster, dist(umap_embeddings_f))
+mean(silh_score_hkm_umap_f[,3])
+summary(silh_score_hkm_umap_f)
+```
+
+#### Male
+
+```{r}
+# apply hierarchical kmeans 
+hkm_result_umap_m <- hkmeans(umap_embeddings_m, k = 3, iter.max = 100)
+
+# Visualize a 2D plot
+fviz_cluster(hkm_result_umap_m, data = male_processed[, 2:9], geom = "point", stand = FALSE)
+
+# caluclate aggregate result
+agg_hkm_umap_m <- aggregate(male_plot[,2:9], by = list(cluster = hkm_result_umap_m$cluster), mean)
+agg_hkm_umap_m
+
+# save the data
+write.xlsx(agg_hkm_umap_m, file = "Results/hkm_umap_m.xlsx")
+
+hkm_result_umap_m$size  # get cluster size
+
+# add assigned cluster for each observation to a new column in the dataset
+cluster_hkm_umap_m <- data.frame(hkm_result_umap_m$cluster)
+merged_hkm_umap_m <- data.frame(cbind(male_plot, cluster_hkm_umap_m))
+names(merged_hkm_umap_m)[ncol(merged_hkm_umap_m)] <- "cluster"
+
+# Boxplot
+for (col in names(merged_hkm_umap_m[,2:9])) {
+  boxplot(merged_hkm_umap_m[,col] ~ merged_hkm_umap_m[,10], 
+        xlab = "cluster",
+        ylab = col,
+        main = col)
+}
+
+# obtain silhouette score
+silh_score_hkm_umap_m <- silhouette(hkm_result_umap_m$cluster, dist(umap_embeddings_m))
+mean(silh_score_hkm_umap_m[,3])
+summary(silh_score_hkm_umap_m)
+```
+
+------------------------------------------------------------------------
+
+# Saving Results
+
+```{r}
+
+results_female <- data.frame(cbind(merged_hkm_umap_f$cluster, kmeans_umap_f$cluster))
+
+results_male <- data.frame(cbind(merged_hkm_umap_m$cluster, kmeans_umap_m$cluster))
+
+names(results_female) <- c("merged_hkm_umap_f_cluster", "kmeans_umap_f_cluster")
+names(results_male) <- c("merged_hkm_umap_m_cluster", "kmeans_umap_m_cluster")
+
+
+write.xlsx(results_female, file = "Results/results_female.xlsx")
+write.xlsx(results_male, file = "Results/results_male.xlsx")
+
+```
+
+```{r}
+write.xlsx(merged_data_4f, file = "Results/merged_data_4f.xlsx")
+write.xlsx(merged_data_4m, file = "Results/merged_data_4m.xlsx")
+write.xlsx(merged_data_umap_4f, file = "Results/merged_data_umap_4f.xlsx")
+write.xlsx(merged_data_umap_4m, file = "Results/merged_data_umap_4m.xlsx")
+
+write.xlsx(merged_hkm_f, file = "Results/merged_hkm_f.xlsx")
+write.xlsx(merged_hkm_m, file = "Results/merged_hkm_m.xlsx")
+write.xlsx(merged_hkm_umap_f, file = "Results/merged_hkm_umap_f.xlsx")
+write.xlsx(merged_hkm_umap_m, file = "Results/merged_hkm_umap_m.xlsx")
+
+```

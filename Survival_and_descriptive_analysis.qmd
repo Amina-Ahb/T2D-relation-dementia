@@ -1,0 +1,1703 @@
+# Packages
+
+```{r}
+# Load required libraries
+library(ggplot2) 
+library(RColorBrewer)
+library(ggpubr)
+
+library(dplyr)
+library(tidyr)
+
+library(openxlsx)   # save as xlsx
+library(readxl)    # to read excel files
+
+library(stringr)
+library(reshape2)
+library(lubridate)
+
+library(survival)   # survival analysis
+library(survminer)  # survival plots
+library(forestmodel) # forest plots
+
+library(nortest)  # for ad.test()
+```
+
+# Import data
+
+```{r}
+# UK data set
+data <- suppressWarnings(read_xlsx(path = "data_master_project_3years.xlsx"))
+# data including comorbidities records
+data_cormobidities <- read_xlsx(path = "SUPPLEMENTARY.xlsx", sheet = "Others")
+# data including cardiovascular diseases records
+data_cardiovascular <- read_xlsx(path = "SUPPLEMENTARY.xlsx", sheet = "Cormobidities")
+# data including depression records
+data_depression <- read_xlsx(path = "depression_data.xlsx")
+# data including depression records
+data_dementia <- read_xlsx(path = "data_dementia_outcomes.xlsx")
+# data inclusing diet records
+data_diet <- read_xlsx(path = "SUPPLEMENTARY_diet score.xlsx", sheet = "Diet")
+
+
+# kmeans data & results
+kmeans_f <- read_xlsx(path = "merged_data_4f.xlsx")
+kmeans_m <- read_xlsx(path = "merged_data_4m.xlsx")
+
+# replace cluster numbers with cluster names
+kmeans_f$cluster <- ifelse(kmeans_f$cluster == 1, "Obesity",
+                               ifelse(kmeans_f$cluster == 2, "Lipid",
+                               ifelse(kmeans_f$cluster == 3, "Age", NA)))
+
+kmeans_m$cluster <- ifelse(kmeans_m$cluster == 1, "Age",
+                               ifelse(kmeans_m$cluster == 2, "Lipid",
+                               ifelse(kmeans_m$cluster == 3, "Obesity", NA)))
+
+# Change first column name to ID
+colnames(data)[1] <- "ID"
+colnames(data_cormobidities)[1] <- "ID"
+colnames(data_cardiovascular)[1] <- "ID"
+colnames(data_dementia)[1] <- "ID"
+colnames(data_depression)[1] <- "ID"
+colnames(data_diet)[1] <- "ID"
+colnames(kmeans_f)[1] <- "ID"
+colnames(kmeans_m)[1] <- "ID"
+```
+
+```{r}
+# convert all data to data frames and ID to character
+data <- data.frame(data)
+data[,1] <- as.character(data[ ,1])
+
+data_cormobidities <- data.frame(data_cormobidities)
+data_cormobidities[,1] <- as.character(data_cormobidities[ ,1])
+
+data_cardiovascular <- data.frame(data_cardiovascular)
+data_cardiovascular[,1] <- as.character(data_cardiovascular[ ,1])
+
+data_dementia <- data.frame(data_dementia)
+data_dementia[,1] <- as.character(data_dementia[ ,1])
+
+data_depression <- data.frame(data_depression)
+data_depression[,1] <- as.character(data_depression[ ,1])
+
+data_diet <- data.frame(data_diet)
+data_diet[,1] <- as.character(data_diet[ ,1])
+
+kmeans_f <- data.frame(kmeans_f)
+kmeans_f[,1] <- as.character(kmeans_f[,1])
+
+kmeans_m <- data.frame(kmeans_m)
+kmeans_m[,1] <- as.character(kmeans_m[,1])
+```
+
+# Pre-processing
+
+```{r}
+data_preprocessing <- function(df, gender_of_data_participants){
+  # merge all data needed for data pre-processing
+  merged_data <- left_join(df, data[,c(1, 256, 47, 87, 95, 75, 6, 155, 171, 39, 304:325, 300, 302, 51, 55, 59, 19)], by = "ID")
+  merged_data <- left_join(merged_data, data_cardiovascular[, c(1, 86, 87, 38, 39, 98, 99, 100, 101)], by = "ID")
+  merged_data <- left_join(merged_data, data_dementia[, c(1, 12, 13, 16:19)], by = "ID")
+  merged_data <- left_join(merged_data, data_cormobidities[,c(1, 2, 3, 4, 5)], by = "ID")
+  merged_data <- left_join(merged_data, data_depression[,c(1:5)], by = "ID")
+  merged_data <- left_join(merged_data, data_diet[, c(1, 66)], by = "ID")
+  merged_data <- left_join(merged_data, data[, c(1, 15, 22)], by = "ID")
+  
+  
+  
+# _____________________________________________________________
+  
+# ATC codes for medications 
+  ATC_C02 <- c("rescinnamine", "reserpine", "rauwolfia alkaloids", "deserpidine", "methoserpidine", "bietaserpine", "methyldopa", "clonidine", "guanfacine", "tolonidine", "moxonidine", "rilmenidine", "trimetaphan", "mecamylamine", "prazosin", "indoramin", "trimazosin", "doxazosin", "urapidil", "betanidine", "guanethidine", "guanoxan", "debrisoquine", "guanoclor", "guanazodine", "guanoxabenz", "diazoxide", "dihydralazine", "hydralazine", "endralazine", "cadralazine", "minoxidil", "nitroprusside", "pinacidil", "veratrum", "metirosine", "pargyline", "ketanserin", "aprocitentan", "bosentan", "ambrisentan", "sitaxentan", "macitentan", "riociguat", "ambrisentan", "macitentan", "diuretics", "syrosingopine", "picodralazine", "Serotonin antagonists") 
+  ATC_C03 <- c("thiazide", "mebutizide", "potassium", "quinethazone", "clopamide", "chlortalidone", "mefruside", "clofenamide", "metolazone", "meticrane", "xipamide", "indapamide", "clorexolone", "fenquizone", "clorexolone", "mersalyl", "theobromine", "cicletanine", "furosemide", "bumetanide", "piretanide", "torasemide", "etacrynic acid", "tienilic acid", "muzolimine", "etozolin", "spironolactone", "potassium canrenoate", "canrenone", "eplerenone", "finerenone", "amiloride", "triamterene", "hydrochlorothiazide", "potassium-sparing agents", "trichlormethiazide", "epitizide", "altizide", "mebutizide", "chlortalidone", "cyclopenthiazide", "metolazone", "bendroflumethiazide ", "butizide", "furosemide", "bumetanide", "tolvaptan", "conivaptan")
+  ATC_C07 <- c("alprenolol", "oxprenolol", "pindolol", "propranolol",  "timolol", "sotalol", "nadolol", "mepindolol", "carteolol", "tertatolol", "bopindolol", "bupranolol", "penbutolol", "cloranolol", "carazolol", "practolol",   "metoprolol", "atenolol", "acebutolol", "betaxolol", "bevantolol", "bisoprolol", "celiprolol", "esmolol", "epanolol", "s-atenolol", "nebivolol", "talinolol",   "landiolol", "labetalol", "carvedilol")
+  ATC_C08<- c("amlodipine", "felodipine", "isradipine", "nicardipine", "nifedipine", "nimodipine", "nisoldipine", "nitrendipine", "lacidipine", "nilvadipine", "manidipine", "barnidipine", "lercanidipine","cilnidipine", "benidipine",   "clevidipine", "levamlodipine", "mibefradil", "verapamil", "gallopamil", "diltiazem", "fendiline", "bepridil", "lidoflazine", "perhexiline")
+  ATC_C09 <- c("pril", "diuretics", "enalapril", "lercanidipine", "lisinopril", "amlodipine", "perindopril", "ramipril", "felodipine", "nitrendipine", "trandolapril", "verapamil", "delapril", "manidipine", "benazepril", "sartan", "olmesartan medoxomil", "azilsartan medoxomil", "hydrochlorothiazide", "aliskiren", "sacubitril", "nebivolol", "remikiren", "aliskiren")
+  ATC_C10 <- c("vastatin", "fibrate", "fibrozil", "colestyramine", "colestipol", "colextran", "colesevelam", "niceritrol", "nicotinic acid", "nicofuranose", "aluminium nicotinate", "nicotinyl alcohol”, “pyridylcarbinol", "acipimox", "nicotinic acid", "dextrothyroxine", "probucol", "tiadenol", "meglutol", "omega-3-triglyceride", "magnesium pyridoxal 5-phosphate glutamate", "policosanol", "ezetimibe", "alipogene tiparvovec", "mipomersen", "lomitapide", "evolocumab", "alirocumab", "bempedoic acid", "inclisiran", "evinacumab", "volanesorsen", "omega-3 fatty acids", "acetylsalicylic acid", "amlodipine", "ramipril", "lisinopril",  "valsartan", "perindopril", "indapamide", "fimasartan", "candesartan", "telmisartan")
+  ATC_A10B <- c("tadalafil", "phenformin", "metformin", "buformin", "glibenclamide", "chlorpropamide", "tolbutamide", "glibornuride", "tolazamide", "carbutamide", "glipizide", "gliquidone", "gliclazide", "metahexamide", "glisoxepide", "glimepiride", "acetohexamide", "glymidine", "sulfonylureas", "dapagliflozin", "canagliflozin", "empagliflozin", "ertugliflozin", "acarbose", "miglitol", "voglibose", "troglitazone", "rosiglitazone", "pioglitazone", "lobeglitazone", "sitagliptin", "vildagliptin", "saxagliptin", "alogliptin", "linagliptin", "gemigliptin", "evogliptin", "teneligliptin", "exenatide", "liraglutide", "lixisenatide", "albiglutide", "dulaglutide", "semaglutide", "beinaglutide", "gliflozin", "guar gum", "repaglinide", "nateglinide", "pramlintide", "benfluorex", "mitiglinide", "imeglimin", "tirzepatide", "carfloglitazar", "dorzagliatin")
+  ATC_A10A <- c("insulin", "lixisenatide", "liraglutide")
+  
+
+# ____________________________________________________________________
+  
+# column 1 ID 
+  
+# ____________________________________________________________________
+  
+# column 2 Body.mass.index..BMI 
+  
+  #table(merged_data[,2])
+# ____________________________________________________________________
+  
+# column 3 Glycated.haemoglobin..HbA1c 
+# column 4 Cholesterol 
+# column 5 HDL.cholesterol
+# column 6 LDL.direct 
+# column 7 C.reactive.protein 
+# column 8 IR 
+# column 9 age_at_diagnosis 
+# column 10 cluster 
+# column 11 Triglycerides 
+  
+# ____________________________________________________________________
+  
+# column 12 Ethnic.background 
+  # create ethnic subgroups
+  merged_data[,12] <- ifelse(merged_data[,12] %in% c("White", "British", "Irish", "Any other white background"), "White",
+                                 ifelse(merged_data[,12] %in% c("White and Black Caribbean ", "White and Black African", "White and Asian", "Any other mixed background"), "Mixed",
+                                 ifelse(merged_data[,12] %in% c("Indian", "Pakistani", "Bangladeshi", "Any other Asian background"), "Asian or Asian British",
+                                 ifelse(merged_data[,12] %in% c("African", "Caribbean", "Any other Black background"), "Black or Black British",
+                                 ifelse(merged_data[,12] %in% c("Chinese"), "Chinese",
+                                 ifelse(merged_data[,12] %in% c("Other ethnic group"), "Other ethnic group", NA))))))
+  
+  #table(merged_data[,12])
+  
+  
+# column 13 Smoking.status 
+  merged_data[,13] <- ifelse(merged_data[,13] == "Never", FALSE,
+                          ifelse(merged_data[,13] %in% c("Previous", "Current"), TRUE, NA))
+
+  #table(merged_data[,13])
+  
+# column 14 Alcohol.intake.frequency 
+  merged_data[,14] <- ifelse(merged_data[,14] == "Never", FALSE, 
+                            ifelse(merged_data[,14] %in% c("Once or twice a week", "Three or four times a week", "Daily or almost daily", "One to three times a month", "Special occasions only"), TRUE, NA))
+
+  #table(merged_data[,14])
+  
+# ____________________________________________________________________
+    
+# column 15 Summed.MET.minutes.per.week.for.all.activity
+# column 16 Townsend.deprivation.index.at.recruitment
+
+# ____________________________________________________________________
+    
+# column 17 Diastolic.blood.pressure..automated.reading 
+# column 18 Systolic.blood.pressure..automated.reading 
+    
+  # hypertension defined as 'diastolic blood pressure' >=90 OR 'systolic blood 
+  # pressure' >= 140 OR hypertension medication intake
+  
+  # hypertension by blood pressure
+  merged_data$hypertension_bp <- ifelse(merged_data[,17] >= 90, TRUE, 
+                                        ifelse(merged_data[,18] >= 140, TRUE, FALSE))
+  
+  #hypertension medication intake
+  merged_data$hypertension_medication <- apply(merged_data[, 20:41], 1, function(x) {any(x %in% c(ATC_C02, ATC_C03, ATC_C07, ATC_C08, ATC_C09))})
+  
+  # define hypertension as hypertensive blood pressure OR hypertension medication intake
+  merged_data$hypertension <- apply(merged_data[,c("hypertension_bp", "hypertension_medication")], 1, any)
+  
+# ____________________________________________________________________
+
+# column 19 Education 
+  # subgroup into secondary, post-secondary and higher education
+  merged_data[,19] <- ifelse(grepl("CSEs or equivalent|O levels/GCSEs or equivalent", merged_data[,19]), "Secondary Education", 
+                      ifelse(grepl("NVQ or HND or HNC or equivalent|A levels/AS levels or equivalent|Other professional qualifications eg: nursing, teaching", merged_data[,19]), "Post-Secondary", 
+                      ifelse(grepl("College or University degree", merged_data[,19]), "Higher Education", NA)))
+
+# ____________________________________________________________________
+
+# column 20 medication
+# column 21 ...305
+# column 22 ...306 
+# column 23 ...307 
+# column 24 ...308 
+# column 25 ...309
+# column 26 ...310 
+# column 27 ...311 
+# column 28 ...312 
+# column 29 ...313
+# column 30 ...314 
+# column 31 ...315 
+# column 32 ...316 
+# column 33 ...317 
+# column 34 ...318 
+# column 35 ...319
+# column 36 ...320
+# column 37 ...321 
+# column 38 ...322 
+# column 39 ...323 
+# column 40 ...324
+# column 41 ...325 
+
+  # function to check if drugs from the ATC codes are present in medication records
+find_matches <- function(row, patterns) {
+  sapply(patterns, function(pattern) any(grepl(pattern, row, ignore.case = TRUE)))
+}
+
+# Apply the function for each medication category
+  suppressWarnings(merged_data$lipid_lowering_medication <- apply(merged_data[, 20:41], 1, function(row) {
+  any(find_matches(row, ATC_C10))
+}))
+
+  suppressWarnings(merged_data$blood_pressure_lowering_medication <- apply(merged_data[, 20:41], 1, function(row) {
+  any(find_matches(row, c(ATC_C02, ATC_C03, ATC_C07, ATC_C08, ATC_C09)))
+}))
+
+  suppressWarnings(merged_data$oral_glucose_lowering_medication <- apply(merged_data[, 20:41], 1, function(row) {
+  any(find_matches(row, ATC_A10B))
+}))
+
+  suppressWarnings(merged_data$insulins <- apply(merged_data[, 20:41], 1, function(row) {
+  any(find_matches(row, ATC_A10A))
+}))
+  
+  # get variable on overall medication intake
+  merged_data$medication_use <- apply(merged_data[,c("lipid_lowering_medication", "blood_pressure_lowering_medication", "oral_glucose_lowering_medication", "insulins")], 1, any)
+  
+# ______________________________________________________________________
+  
+# column 42 Standard.PRS.for.type.2.diabetes..T2D. 
+# column 43 Standard.PRS.for.alzheimer.s.disease..AD.
+  
+# ______________________________________________________________________
+  
+# column 44 Illnesses.of.father
+# column 45 Illnesses.of.mother 
+# column 46 Illnesses.of.siblings
+
+  # Check for family history of "diabetes"
+  suppressWarnings(merged_data$family_history_diabetes <- ifelse(rowSums(sapply(merged_data[, 44:46], grepl, pattern = "diabetes", ignore.case = TRUE)) > 0, TRUE, FALSE))
+
+  # Check for family history of "dementia" or "alzheimer"
+  suppressWarnings(merged_data$family_history_dementia <- ifelse(rowSums(sapply(merged_data[, 44:46], grepl, pattern = c("dementia", "alzheimer"), ignore.case = TRUE)) > 0, TRUE, FALSE))
+  
+# ______________________________________________________________________
+  
+# column 47 Date.E11.first.reported..non.insulin.dependent.diabetes.mellitus. 
+
+# ______________________________________________________________________
+  
+# column 48 Date.I50.first.reported..heart.failure. 
+# column 49 ...87 
+# column 50 Date.I25.first.reported..chronic.ischaemic.heart.disease. 
+# column 51 ...39 
+# column 52 Date.I63.first.reported..cerebral.infarction. 
+# column 53 ...99 
+# column 54 Date.I64.first.reported..stroke..not.specified.as.haemorrhage.or.infarction. 
+# column 55 ...101 
+  
+  # change data to Date class
+  merged_data[,c(48,50,52,54)] <- lapply(merged_data[,c(48,50,52,54)], as.numeric)
+  merged_data[,c(48,50,52,54)] <- lapply(merged_data[,c(48,50,52,54)], as.Date, origin = "1899-12-30")
+  merged_data[,47] <- as.Date(merged_data[,47])
+  
+  # get distinct prevalent cardiovascular disease cases (cases reported before T2D diagnosis)
+  merged_data$prevalent_heart_failure <- ifelse(merged_data[,48] < merged_data[,47], TRUE, FALSE)
+  merged_data$prevalent_chronic_ischaemic_heart_disease <- ifelse(merged_data[,50] < merged_data[,47], TRUE, FALSE)
+  merged_data$prevalent_cerebral_infarction <- ifelse(merged_data[,52] < merged_data[,47], TRUE, FALSE)
+  merged_data$prevalent_stroke <- ifelse(merged_data[,54] < merged_data[,47], TRUE, FALSE)
+  
+  # get variable for overall prevalent cardiovascular disease cases (cases reported before T2D diagnosis)
+  merged_data$prevalent_cardiovascular_disease <- apply(merged_data[,c("prevalent_heart_failure", "prevalent_chronic_ischaemic_heart_disease", "prevalent_cerebral_infarction", "prevalent_stroke")], 1, any)
+  
+  #  # get distinct cardiovascular disease cases 
+  merged_data$heart_failure <- ifelse(!is.na(merged_data[,48]), TRUE, FALSE)
+  merged_data$chronic_ischaemic_heart_disease <- ifelse(!is.na(merged_data[,50]), TRUE, FALSE)
+  merged_data$cerebral_infarction <- ifelse(!is.na(merged_data[,52]), TRUE, FALSE)
+  merged_data$stroke <- ifelse(!is.na(merged_data[,54]), TRUE, FALSE)
+  
+  # get variable for overall cardiovascular disease cases
+  merged_data$cardiovascular_disease <- apply(merged_data[,c("heart_failure", "chronic_ischaemic_heart_disease", "cerebral_infarction", "stroke")], 1, any)
+
+# ______________________________________________________________________
+  
+# column 56 p130838 F01  vascular dementia
+# column 57 p130839 
+# column 58 p130842 F03 unspecified dementia
+# column 59 p130843 
+# column 60 p131036 G30 alzheimer's disease
+# column 61 p131037
+  
+  # convert the records to date format
+  merged_data[,c(56, 58, 60)] <- lapply(merged_data[,c(56, 58, 60)], as.Date)
+  
+  # get distinct prevalent dementia cases (cases reported before T2D diagnosis)
+  merged_data$prevalent_vascular_dementia <- ifelse(merged_data[,56] < merged_data[,47], TRUE, FALSE)
+  merged_data$prevalent_unspecified_dementia <- ifelse(merged_data[,58] < merged_data[,47], TRUE, FALSE)
+  merged_data$prevalent_alzheimers_disease <- ifelse(merged_data[,60] < merged_data[,47], TRUE, FALSE)
+  
+  # get variable for overall prevalent dementia cases (cases reported before T2D diagnosis)
+  merged_data$prevalent_dementia <- apply(merged_data[,c("prevalent_unspecified_dementia", "prevalent_vascular_dementia", "prevalent_alzheimers_disease")], 1, any)
+  
+  
+  # Apply pmin to find the earliest date between all types of dementia
+  merged_data$earliest_date_dementia <- as.Date(do.call(pmin, c(merged_data[, c(56, 58, 60)], na.rm = TRUE)))
+  
+  # get the incident dementia cases
+  merged_data$dementia_after_diabetes <- ifelse(merged_data$earliest_date_dementia > merged_data[,47], merged_data$earliest_date_dementia, NA)
+  # convert them to date
+  merged_data$dementia_after_diabetes <- as.Date(merged_data$dementia_after_diabetes, origin = "1970-01-01")
+
+# ______________________________________________________________________
+  
+# column 62 Date.E78.first.reported..disorders.of.lipoprotein.metabolism.and.other.lipidaemias.
+# column 63 Source.of.report.of.E78..disorders.of.lipoprotein.metabolism.and.other.lipidaemias.
+  
+  # determine hyperlipidemia as TC > 5.2 OR HDL < 1.3 for female and < 1.0 for male OR > 2.6 for LDL OR > 1.7 for triglyceride
+  merged_data$hyperlipidemia <- ifelse(merged_data[,4] > 5.2, TRUE, # TC
+                                      ifelse(merged_data[,5] < ifelse(gender_of_data_participants == "f", 1.3, 1.0), TRUE, # HDL 
+                                      ifelse(merged_data[,6] > 2.6, TRUE, # LDL
+                                      ifelse(merged_data[,11] > 1.7, TRUE, FALSE)))) # Triglyceride
+  
+  # get variable for cardiovascular risk factors (hypertension OR hyperlipidemia)
+  merged_data$cardiovascular_risk_factors <- apply(merged_data[,c("hypertension", "hyperlipidemia")], 1, any)
+  
+# ______________________________________________________________________
+  
+# column 64 Date.N18.first.reported..chronic.renal.failure. 
+# column 65 Source.of.report.of.N18..chronic.renal.failure. 
+# column 66 Date.F32.first.reported..depressive.episode. 
+# column 67 Source.of.report.of.F32..depressive.episode. 
+# column 68 Date.F33.first.reported..recurrent.depressive.disorder. 
+# column 69 Source.of.report.of.F33..recurrent.depressive.disorder.
+  
+  # convert the variable to date 
+  merged_data[,c(64, 66, 69)] <- lapply(merged_data[,c(64, 66, 69)], as.numeric)
+  merged_data[,c(64, 66, 69)] <- lapply(merged_data[,c(64, 66, 69)], as.Date, origin = "1899-12-30")
+  
+  # get boolean variable for chronic renal failure and depression
+  merged_data$chronic_renal_failure <- ifelse(!is.na(merged_data[,64]), TRUE,FALSE)
+  merged_data$depression <- ifelse(!is.na(merged_data[,c(66, 69)]), TRUE, FALSE)
+  
+  # get variable for cormobidities (chronic renal failure OR depression OR cardiovascular disease)
+  merged_data$cormobidities <- apply(merged_data[,c("chronic_renal_failure", "depression", "cardiovascular_disease")], 1, any)
+
+# ______________________________________________________________________
+  
+# column 70 diet score 
+  # change variable name and convert to numeric
+  colnames(merged_data)[70] <- "Diet_score"
+  merged_data[,70] <- as.numeric(merged_data[,70])
+
+# ______________________________________________________________________
+
+#### Cox time, event
+  
+  # start date as T2D diagnosis date
+  merged_data$start_date <- merged_data[,47]
+  
+  # get end date due to diagnosis of dementia
+  merged_data$end_date_dementia <- merged_data$dementia_after_diabetes
+  
+# column 71 Date.of.death
+  # get end date due to death
+  merged_data$end_date_death <- as.Date(merged_data[,71])
+  
+# column 72 UK.Biobank.assessment.centre
+  # get end date due to end of study period
+  # get end date of study for every assessment center
+  merged_data$end_date_study <- ifelse(merged_data[,72] %in% c("Bristol", "Manchester", "Croydon", "Leeds", "Stockport (pilot)", "Birmingham", "Bury", "Sheffield", "Hounslow", "Newcastle", "Nottingham", "Liverpool", "Barts", "Oxford", "Stoke", "Reading", "Middlesborough"), as.Date("2023-11-20") , # England
+                                 ifelse(merged_data[,72] %in% c("Glasgow", "Edinburgh"), as.Date("2023-12-31"), # Scotland
+                                 ifelse(merged_data[,72] %in% c("Cardiff", "Swansea", "Wrexham"), as.Date("2023-11-20"), NA))) # Wales
+  
+  # convert variable to date 
+  merged_data$end_date_study <- as.Date(merged_data$end_date_study)
+  
+  
+  # get earliest between end dates between diagnosis, death, end of study for cox regression
+  merged_data$earliest_end_date <- as.Date(do.call(pmin, c(merged_data[, c("end_date_dementia", "end_date_death", "end_date_study")], na.rm = TRUE)))
+  
+  # determine the number of months between start date and earliest end date
+  merged_data$time <- as.period(interval(merged_data$start_date, merged_data$earliest_end_date)) %/% months(1)
+  
+  # prepare event column : 1 if participant got dementia, 0 if not
+  merged_data$event <- ifelse(is.na(merged_data$dementia_after_diabetes), 0,
+                                 ifelse(!is.na(merged_data$dementia_after_diabetes ), 1, 0))
+  
+# __________________________________________________________________________
+  
+  # get boolean variable for obesity 
+  merged_data$obesity <- ifelse(merged_data[,2] >= 30, TRUE,
+                          ifelse(merged_data[,2] < 30, FALSE, NA))
+  
+# __________________________________________________________________________
+  
+  # get incident vascular dementia cases for cox regression and convert to date
+  merged_data$incident_vascular_dementia <- ifelse(merged_data[,56] > merged_data[,47], merged_data[,56], FALSE)
+  merged_data$incident_vascular_dementia <- as.Date(merged_data$incident_vascular_dementia, origin = "1970-01-01")
+  
+  # prepare event column : 1 if participant got dementia, 0 if not
+  merged_data$event_vascular_dementia <- ifelse(is.na(merged_data$incident_vascular_dementia), 0,
+                                 ifelse(!is.na(merged_data$incident_vascular_dementia ), 1, 0))
+  
+  # get earliest between dates: diagnosis vascular dementia, death, end of study
+  merged_data$earliest_end_date_vascular_dementia <- as.Date(do.call(pmin, c(merged_data[, c("incident_vascular_dementia", "end_date_death", "end_date_study")], na.rm = TRUE)))
+  
+  # determine the number of months between start date and earliest end_date
+  merged_data$time_vascular_dementia <- as.period(interval(merged_data$start_date, merged_data$earliest_end_date_vascular_dementia)) %/% months(1)
+ 
+  
+  # get incident alzheimers disease cases for cox regression and convert to date
+  merged_data$incident_alzheimers_disease <- ifelse(merged_data[,60] > merged_data[,47], merged_data[,60], FALSE)
+  merged_data$incident_alzheimers_disease <- as.Date(merged_data$incident_alzheimers_disease, origin = "1970-01-01")
+  
+  # prepare event column : 1 if participant got dementia, 0 if not
+  merged_data$event_alzheimers_disease <- ifelse(is.na(merged_data$incident_alzheimers_disease), 0,
+                                 ifelse(!is.na(merged_data$incident_alzheimers_disease ), 1, 0))
+  
+  # get earliest between dates: diagnosis alzheimers disease, death, end of study
+  merged_data$earliest_end_date_alzheimers_disease <- as.Date(do.call(pmin, c(merged_data[, c("incident_alzheimers_disease", "end_date_death", "end_date_study")], na.rm = TRUE)))
+  
+  # determine the number of months between start date and earliest end_date
+  merged_data$time_alzheimers_disease <- as.period(interval(merged_data$start_date, merged_data$earliest_end_date_alzheimers_disease)) %/% months(1)
+ 
+  
+# __________________________________________________________________________
+  
+  # remove unnecessary variables from the dataset
+  merged_data <- merged_data[, -c(17, 18, 20:41, 44:69, 71:74, 83:86, 88:91, 93:95, 97:99, 101:102)]
+  
+  return(merged_data)
+
+}
+
+data_f <- data_preprocessing(kmeans_f, "f")
+data_m <- data_preprocessing(kmeans_m, "m")
+```
+
+# PRS - diabetes
+
+```{r}
+# function to divide PRS for T2D into tertiles 
+PRS_quantile_diabetes <- function(df){  
+  
+  # delete observation with missing PRS
+  merged_data <- df[complete.cases(df[, 18]), ]
+  
+  # create tertiles based on PRS for T2D
+  merged_data$tertile <- cut(merged_data[,18],
+                             breaks = quantile(merged_data[,18], 
+                             probs = seq(0, 1, by = 1/3)),
+                             include.lowest = TRUE,
+                             labels = c("Low", "Intermediate", "High"))
+  
+  return(merged_data)
+}
+
+# apply function to data
+PRS_diabetes_f <- PRS_quantile_diabetes(data_f)
+PRS_diabetes_m <- PRS_quantile_diabetes(data_m)
+
+```
+
+## Analysis
+
+```{r}
+# Group by cluster and summarize the counts for the PRS tertiles
+percentage_female <- PRS_diabetes_f %>%
+  # group by cluster
+  group_by(cluster) %>%
+  summarise(
+    # get the total count and the count for every PRS tertile
+    total_count = n(),
+    high_count = sum(tertile == "High"),
+    intermediate_count = sum(tertile == "Intermediate"),
+    low_count = sum(tertile == "Low"),
+    
+    # calculate the percentage of cases for every PRS tertile
+    percent_high = (high_count / total_count) * 100,
+    percentage_intermediate = (intermediate_count / total_count) * 100,
+    percentage_low = (low_count / total_count) * 100, 
+    
+    # get the mean value
+    mean = mean(Standard.PRS.for.type.2.diabetes..T2D., na.rm = TRUE)
+  )
+percentage_female
+
+# Group by cluster and summarize the counts for the PRS tertiles
+percentage_male <- PRS_diabetes_m %>%
+  # group by cluster
+  group_by(cluster) %>%
+  summarise(
+    # get the total count and the count for every PRS tertile
+    total_count = n(),
+    high_count = sum(tertile == "High"),
+    intermediate_count = sum(tertile == "Intermediate"),
+    low_count = sum(tertile == "Low"),
+    
+    # calculate the percentage of cases for every PRS tertile
+    percent_high = (high_count / total_count) * 100,
+    percentage_intermediate = (intermediate_count / total_count) * 100,
+    percentage_low = (low_count / total_count) * 100, 
+    
+    # get the mean value
+    mean = mean(Standard.PRS.for.type.2.diabetes..T2D., na.rm = TRUE)
+  )
+percentage_male
+```
+
+------------------------------------------------------------------------
+
+# Distribution of continuous variables
+
+```{r}
+# Convert 'cluster' type to factor
+PRS_diabetes_f$cluster <- as.factor(PRS_diabetes_f$cluster)
+PRS_diabetes_m$cluster <- as.factor(PRS_diabetes_m$cluster)
+```
+
+### Female
+
+#### Plot for every continuous variable
+
+```{r}
+
+# columns to plot
+columns_to_plot <- c(19, 2, 4:7, 9, 11, 15, 16, 20)
+
+# Iterate over each column
+for (col in columns_to_plot) {
+  col_name <- names(PRS_diabetes_f)[col]  # Get column name
+  
+  # Perform and print Anderson-Darling test
+  ad_test_result <- ad.test(PRS_diabetes_f[[col_name]])
+  
+  cat("Anderson-Darling test result for", col_name, "\n")
+  print(ad_test_result)
+  cat("\n")
+  
+  # Create density plot 
+  plot <- ggplot(PRS_diabetes_f, aes_string(x = col_name)) + 
+    geom_density(fill = "blue", alpha = 0.5) +
+    theme_minimal() +
+    labs(title = paste("Density Plot of", col_name), x = col_name, y = "Density")
+  
+  print(plot) 
+}
+
+
+```
+
+#### Plot for variable \~cluster
+
+```{r}
+# columns to plot
+columns_to_plot <- c(19, 2, 4:7, 9, 11, 15, 16, 20)
+
+# Iterate over each column 
+for (col in columns_to_plot) {
+  col_name <- names(PRS_diabetes_f)[col]  # Get column name
+  
+  # Perform and print Shapiro-Wilk test stratified by cluster
+  shapiro_results <- tapply(PRS_diabetes_f[[col_name]], PRS_diabetes_f$cluster, shapiro.test)
+  
+  cat("Shapiro-Wilk test results for", col_name, "\n")
+  print(shapiro_results)
+  cat("\n")
+  
+  # Create a density plot for each cluster
+  plot <- ggplot(PRS_diabetes_f, aes_string(x = col_name, fill = "cluster")) + 
+    geom_density(alpha = 0.5) +
+    theme_minimal() +
+    labs(title = paste("Density Plot of", col_name), x = col_name, y = "Density") +
+    facet_wrap(~ cluster, scales = "free")
+  
+  print(plot) 
+}
+
+```
+
+### Male
+
+#### Plot for variable
+
+```{r}
+# columns to plot
+columns_to_plot <- c(2, 4:7, 9, 11, 15, 16, 20)
+
+# Iterate over each column 
+for (col in columns_to_plot) {
+  col_name <- names(PRS_diabetes_m)[col]  # Get column name 
+  
+  # Perform and print Anderson-Darling test
+  ad_test_result <- ad.test(PRS_diabetes_m[[col_name]])
+  
+  cat("Anderson-Darling test result for", col_name, "\n")
+  print(ad_test_result)
+  cat("\n")
+  
+  # Create density plot
+  plot <- ggplot(PRS_diabetes_m, aes_string(x = col_name)) + 
+    geom_density(fill = "blue", alpha = 0.5) +
+    theme_minimal() +
+    labs(title = paste("Density Plot of", col_name), x = col_name, y = "Density")
+  
+  print(plot) 
+}
+
+```
+
+#### Plot for variable \~cluster
+
+```{r}
+
+# columns to plot
+columns_to_plot <- c(19, 2, 4:7, 9, 11, 15, 16, 20)
+
+# Iterate over each column 
+for (col in columns_to_plot) {
+  col_name <- names(PRS_diabetes_m)[col]  # Get column name
+  
+  # Perform and print Shapiro-Wilk test stratified by cluster
+  shapiro_results <- tapply(PRS_diabetes_m[[col_name]], PRS_diabetes_m$cluster, shapiro.test)
+  
+  cat("Shapiro-Wilk test results for", col_name, "\n")
+  print(shapiro_results)
+  cat("\n")
+  
+  # Create a density plot for each cluster
+  plot <- ggplot(PRS_diabetes_m, aes_string(x = col_name, fill = "cluster")) + 
+    geom_density(alpha = 0.5) +
+    theme_minimal() +
+    labs(title = paste("Density Plot of", col_name), x = col_name, y = "Density") +
+    facet_wrap(~ cluster, scales = "free")
+  
+  print(plot) 
+}
+
+```
+
+# Summary statistics for continuous variables
+
+### Median and quantile
+
+```{r}
+
+# Function to calculate summary statistics
+stats <- function(df) {
+  
+  # Empty list to store summary statistics
+  summary_stats_list <- list()
+  
+  # columns of interest
+  columns_of_interest <- c(2, 4:7, 9, 11, 15, 16, 20)
+  
+  # Loop through each column of interest
+  for (col in columns_of_interest) {
+    col_name <- names(df)[col]
+    
+    # Calculate statistics 
+    m <- mean(df[[col_name]], na.rm = TRUE)
+    med <- median(df[[col_name]], na.rm = TRUE)
+    sd_val <- sd(df[[col_name]], na.rm = TRUE)
+    q1 <- quantile(df[[col_name]], probs = 0.25, na.rm = TRUE)
+    q3 <- quantile(df[[col_name]], probs = 0.75, na.rm = TRUE)
+    
+    # Create a data frame for the statistics
+    stats_df <- data.frame(
+      variable = col_name,
+      mean = m,
+      sd = sd_val,
+      median = med,
+      q1 = q1,
+      q3 = q3
+    )
+    
+    # Store in the summary_stats_list
+    summary_stats_list[[col_name]] <- stats_df
+  }
+  
+  # Combine all data frames into a single data frame
+  summary_stats_combined <- do.call(rbind, summary_stats_list)
+  
+  return(summary_stats_combined)
+}
+
+# Calculate summary statistics
+stats_f <- stats(PRS_diabetes_f)
+stats_f
+
+stats_m <- stats(PRS_diabetes_m)
+stats_m
+
+```
+
+### Median and quantile - stratified by cluster
+
+```{r}
+# Function to calculate summary statistics for a given group variable
+stats_by_cluster <- function(df, group_var) {
+  
+  # Empty list to store summary statistics
+  summary_stats_list <- list()
+  
+  # Loop through each column of interest
+  for (col in c(2, 4:7, 9, 11, 15, 16, 20)) {
+    col_name <- names(df)[col]
+    
+    # Calculate statistics for each group
+    stats_by_group <- tapply(df[[col_name]], df[[group_var]], function(x) {
+      m <- mean(x, na.rm = TRUE)
+      med <- median(x, na.rm = TRUE)
+      q1 <- quantile(x, probs = 0.25, na.rm = TRUE)
+      q3 <- quantile(x, probs = 0.75, na.rm = TRUE)
+      return(c(mean = m, median = med, q1 = q1, q3 = q3))
+    })
+    
+    # Convert to data frame
+    stats_df <- as.data.frame(do.call(rbind, stats_by_group))
+    colnames(stats_df) <- c("mean", "median", "q1", "q3")
+    stats_df$variable <- col_name
+    stats_df$cluster <- as.character(rownames(stats_df))
+    rownames(stats_df) <- NULL
+    
+    # Store in the summary_stats_list
+    summary_stats_list[[col_name]] <- stats_df
+  }
+  
+  # Combine all data frames into a single data frame
+  summary_stats_combined <- do.call(rbind, summary_stats_list)
+  
+  return(summary_stats_combined)
+}
+
+# calculate summary statistics
+stats_by_cluster_f <- stats_by_cluster(PRS_diabetes_f, group_var = "cluster")
+stats_by_cluster_f
+stats_by_cluster_m <- stats_by_cluster(PRS_diabetes_m, group_var = "cluster")
+stats_by_cluster_m
+
+```
+
+# Anova \[continuous variables\]
+
+### **ANOVA + TukeyHSD**
+
+```{r}
+anova_statistics <- function(df){
+  
+  # Compute mean by cluster for all continuous variables
+  means <- aggregate(df[,c(2, 4:7, 9, 11, 15, 16, 20)], by = list(cluster = df$cluster), FUN = function(x) mean(x, na.rm = TRUE))
+
+  # Lists to store results
+  anova_tests_f <- list()
+  tukey_tests_f <- list()
+
+  # Loop through continuous variables
+  for (col in c(2, 4:7, 9, 11, 15, 16, 20)) {
+    col_name <- names(df)[col]
+    
+    # Perform ANOVA and store summary
+    aov_result_f <- aov(df[[col]] ~ df$cluster)
+    anova_tests_f[[col_name]] <- summary(aov_result_f)
+    
+    # Perform and store Tukey HSD test 
+    tukey_tests_f[[col_name]] <- TukeyHSD(aov_result_f)
+    
+  }
+  
+  return(list(anova = anova_tests_f, tukey = tukey_tests_f, means = means))
+}
+
+# Determine and print the ANOVA test results 
+anova_diabetes_f <- anova_statistics(PRS_diabetes_f)
+anova_diabetes_f
+
+anova_diabetes_m <- anova_statistics(PRS_diabetes_m)
+anova_diabetes_m
+```
+
+### **ANOVA + TukeyHDS + Boxplot**
+
+```{r}
+anova_statistics_plot <- function(df) {
+  # Compute mean by cluster for all continuous variables
+  means <- aggregate(df[,c(4:7, 9, 11, 15, 16, 20)], by = list(cluster = df$cluster), mean)
+  
+  # Lists to store results
+  anova_tests_f <- list()
+  tukey_tests_f <- list()
+  boxplot_data <- list()
+  plots <- list() 
+  
+  # Loop through continuous variables
+  for (col in c(4:7, 9, 11, 15, 16, 20)) {
+    col_name <- names(df)[col]
+    
+    # Perform and store summary of ANOVA
+    aov_result_f <- aov(df[[col]] ~ df$cluster)
+    anova_summary <- summary(aov_result_f)
+    anova_tests_f[[col_name]] <- anova_summary
+    
+    # Extract F-value and p-value 
+    f_value <- anova_summary[[1]]$`F value`[1]
+    p_value <- anova_summary[[1]]$`Pr(>F)`[1]
+    
+    # Perform Tukey HSD 
+    tukey_tests_f[[col_name]] <- TukeyHSD(aov_result_f)
+    
+    # Create boxplot data
+    boxplot_data[[col_name]] <- data.frame(
+      cluster = as.factor(df$cluster),
+      value = df[[col]]
+    )
+    
+    # Create boxplot 
+    p <- ggplot(boxplot_data[[col_name]], aes(x = cluster, y = value)) +
+      geom_boxplot() +
+      geom_jitter(aes(color = cluster), width = 0.2, size = 1.5, alpha = 0.6) +
+      ggtitle(paste("Boxplot of", col_name)) +
+      geom_text(
+        x = 1.5, 
+        y = max(boxplot_data[[col_name]]$value, na.rm = TRUE),
+        label = paste("ANOVA F-value:", round(f_value, 2),
+                      "\nANOVA p-value:", format.pval(p_value)),
+        vjust = -0.5,
+        size = 4 
+      ) + theme_minimal()
+    
+    plots[[col_name]] <- p
+  }
+  
+  return(list(anova = anova_tests_f, tukey = tukey_tests_f, means = means, plots = plots))
+}
+
+# Print the ANOVA test results 
+anova_diabetes_f_plot <- anova_statistics_plot(PRS_diabetes_f)
+anova_diabetes_f_plot
+
+anova_diabetes_m_plot <- anova_statistics_plot(PRS_diabetes_m)
+anova_diabetes_m_plot
+```
+
+### ANOVA + t-test + Boxplots for female data
+
+```{r}
+
+dat <- PRS_diabetes_f
+
+x <- which(names(dat) == "cluster") # grouping variable
+y <- which(names(dat) == "Glycated.haemoglobin..HbA1c." | names(dat) == "Cholesterol" | names(dat) == 'HDL.cholesterol' | names(dat) == 'LDL.direct' | names(dat) == 'C.reactive.protein' | names(dat) == 'IR' | names(dat) == 'age_at_diagnosis' | names(dat) == 'Standard.PRS.for.type.2.diabetes..T2D.' |names(dat) == 'Standard.PRS.for.alzheimer.s.disease..T2D.'| names(dat) == 'Summed.MET.minutes.per.week.for.all.activity' | names(dat) == 'Townsend.deprivation.index.at.recruitment') # variables to test
+
+# analysis methods to apply
+method1 <- "anova" # "anova" OR "kruskal.test"
+method2 <- "t.test" # "wilcox.test" OR "t.test"
+
+# clusters to compare in t-test statistics
+my_comparisons <- list(c("Age", "Lipid"), c("Age", "Obesity"), c("Lipid", "Obesity"))
+
+
+# Calculate means for each cluster and variable
+means <- aggregate(dat[, y], by = list(dat[, x]), FUN = mean, na.rm = TRUE)
+
+# boxplot
+for (i in y) {
+  for (j in x) {
+    p <- ggboxplot(dat,
+      x = colnames(dat[j]), y = colnames(dat[i]),
+      color = colnames(dat[j]),
+      legend = "none",
+      palette = "npg",
+      add = "jitter"
+    )
+    print(
+      p + stat_compare_means(aes(label = paste0(after_stat(method), ", p-value = ", after_stat(p.format))),
+        method = method1, label.y = max(dat[, i], na.rm = TRUE)
+      )
+      + stat_compare_means(comparisons = my_comparisons, method = method2, label = "p.format", na.rm = TRUE) 
+    )
+  }
+}
+print(means)
+```
+
+# Kruskal-Wallis test
+
+```{r}
+# function for the kruskal test
+kruskal_statistics <- function(df){
+  
+  # create empty list for storage
+  kruskal_test_results <- list()
+
+  # Loop through continuous variables
+  for (col in c(4:7, 9, 11, 15, 16, 20)) {
+    var_name <- names(df)[col]
+    
+    # Perform and store Kruskal-Wallis test
+    kruskal_result <- kruskal.test(formula(paste(var_name, "~ cluster")), data = df)
+    kruskal_test_results[[var_name]] <- kruskal_result
+  }
+  
+  return(kruskal_test_results)
+}
+
+# apply the function to the data
+kruskal_diabetes_f <- kruskal_statistics(data_f)
+kruskal_diabetes_f
+
+kruskal_diabetes_m <- kruskal_statistics(data_m)
+kruskal_diabetes_m
+```
+
+# Summary statistics for categorical variables
+
+### Count and percentage
+
+```{r}
+
+# catgeorical variables
+value_columns <- c(12:14, 17, 21:25, 27:29, 31, 32, 40, 50) 
+
+# Function to calculate percentages for a single column by index
+calculate_percentages <- function(df, col_index) {
+  # get column name
+  col_name <- names(df)[col_index]
+  df %>%
+    # convert column name datatype to character
+    mutate(across(all_of(col_name), as.character)) %>%
+    # group by the values in the column and summarize the counts
+    group_by(!!sym(col_name)) %>%
+    summarise(Count = n(), .groups = 'drop') %>%
+    # calculate the total count and percentage for each value
+    mutate(Total = sum(Count), Percentage = (Count / Total) * 100) %>%
+    # select and rename columns
+    select(Value = !!sym(col_name), Count, Percentage)
+}
+
+# Apply the function to columns in value_columns in PRS_diabetes_f and PRS_diabetes_m and print the results
+results_f <- lapply(value_columns, function(col_index) calculate_percentages(PRS_diabetes_f, col_index))
+names(results_f) <- names(PRS_diabetes_f)[value_columns]
+results_f <- bind_rows(results_f, .id = "Variable")
+results_f
+
+
+results_m <- lapply(value_columns, function(col_index) calculate_percentages(PRS_diabetes_m, col_index))
+names(results_m) <- names(PRS_diabetes_m)[value_columns]
+results_m <- bind_rows(results_m, .id = "Variable")
+results_m
+
+```
+
+### Count and percentage - stratified by cluster
+
+```{r}
+
+# categorical variables
+value_columns <- c(12:14, 17, 21:25, 27:29, 31, 32, 40, 50)  
+
+# Function to calculate percentages for a single column by index
+calculate_percentages_by_cluster <- function(df, col_index) {
+  # get column name
+  col_name <- names(df)[col_index]
+  df %>%
+    # convert column name datatype to character
+    mutate(across(all_of(col_name), as.character)) %>%
+    # group by cluster and by the values in the column and summarize the counts
+    group_by(cluster, !!sym(col_name)) %>%
+    summarise(Count = n(), .groups = 'drop') %>%
+    # group by cluster
+    group_by(cluster) %>%
+    # calculate the total count and percentage for each value
+    mutate(Total = sum(Count), Percentage = (Count / Total) * 100) %>%
+    # select and rename columns
+    select(cluster, Value = !!sym(col_name), Count, Percentage)
+}
+
+# Apply the function to columns in value_columns in PRS_diabetes_f and PRS_diabetes_m and print the results
+results_f <- lapply(value_columns, function(col_index) calculate_percentages_by_cluster(PRS_diabetes_f, col_index))
+names(results_f) <- names(PRS_diabetes_f)[value_columns]
+results_f <- bind_rows(results_f, .id = "Variable")
+results_f
+
+results_m <- lapply(value_columns, function(col_index) calculate_percentages_by_cluster(PRS_diabetes_m, col_index))
+names(results_m) <- names(PRS_diabetes_m)[value_columns]
+results_m <- bind_rows(results_m, .id = "Variable")
+results_m
+
+```
+
+# Chi-squared test \[Categorical variables\]
+
+```{r}
+# chi.squared_statistics function
+chi.squared_statistics <- function(df){
+  
+  # empty list to store results
+  results <- list()
+  
+  # loop through categorical variables
+  for (col in names(df)[c(12:14, 17, 21:25, 27:29, 31, 32, 40, 50)]) {
+    
+    # Create a contingency table
+    contingency_table <- table(df[[col]], df$cluster)
+    
+    # Perform the chi-squared test
+    chi_squared_test <- chisq.test(contingency_table)
+    
+    # Store the results in the list
+    results[[col]] <- list(
+      table = contingency_table,
+      chi_squared_test = chi_squared_test
+    )
+    
+    # Print the results
+    cat("Contingency table for", col, ":\n")
+    print(contingency_table)
+    cat("\n")
+    
+    cat("Chi-squared test for", col, ":\n")
+    print(chi_squared_test)
+    cat("\n")
+    
+    # Plot the results
+    p <- ggplot(df, aes_string(x = col, fill = "cluster")) +
+      geom_bar(position = "dodge") +
+      labs(x = col, y = "Count", title = col) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(hjust = 0.5),
+        axis.text = element_text(size = 12),
+        axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+        axis.title = element_text(size = 14),
+        panel.grid.major = element_line(color = "grey90"),
+        panel.grid.minor = element_blank()
+      ) +
+      scale_fill_brewer(palette = "Dark2")
+    print(p)
+  }
+  
+  return(results)
+}
+
+# store and view the results
+chi_squared_diabetes_f <- chi.squared_statistics(PRS_diabetes_f)
+chi_squared_diabetes_f
+
+chi_squared_diabetes_m <- chi.squared_statistics(PRS_diabetes_m)
+chi_squared_diabetes_m
+```
+
+# Cox-regression models - all_cause dementia
+
+```{r}
+# change cluster names for presentation in plots
+data_f$cluster <- ifelse(data_f$cluster == "Obesity", "Obesity-related",
+                         ifelse(data_f$cluster == "Age", "Age-related",
+                         ifelse(data_f$cluster == "Lipid", "Lipid-related", data_f$cluster)))
+#table(data_m$cluster)
+
+data_m$cluster <- ifelse(data_m$cluster == "Obesity", "Obesity-related",
+                         ifelse(data_m$cluster == "Age", "Age-related",
+                         ifelse(data_m$cluster == "Lipid", "Lipid-related", data_m$cluster)))
+#table(data_m$cluster)
+
+```
+
+## Linearity assumption
+
+```{r}
+plot_ggcoxfunctional <- function(data, time_col, event_col, vars) {
+  for (var in vars) {
+    # Filter out rows with missing or non-positive values for the current variable
+    data_clean <- data[!is.na(data[[var]]) & data[[var]] > 0, ]
+    
+    # Create the formula for ggcoxfunctional
+    formula <- as.formula(paste("Surv(", time_col, ",", event_col, ") ~", var, "+ log(", var, ") + sqrt(", var, ")"))
+    
+    # Plot using ggcoxfunctional
+    print(ggcoxfunctional(formula, data = data_clean))
+  }
+}
+
+# List of variables to check
+vars_to_check <- c("Summed.MET.minutes.per.week.for.all.activity", "age_at_diagnosis", "Townsend.deprivation.index.at.recruitment")
+
+# Call the function
+plot_ggcoxfunctional(data_f, "time", "event", vars_to_check)
+
+```
+
+```{r}
+plot_ggcoxfunctional <- function(data, time_col, event_col, vars) {
+  for (var in vars) {
+    # Filter out rows with missing or non-positive values for the current variable
+    data_clean <- data[!is.na(data[[var]]) & data[[var]] > 0, ]
+    
+    # Create the formula for ggcoxfunctional
+    formula <- as.formula(paste("Surv(", time_col, ",", event_col, ") ~", var, "+ log(", var, ") + sqrt(", var, ")"))
+    
+    # Plot using ggcoxfunctional
+    print(ggcoxfunctional(formula, data = data_clean))
+  }
+}
+
+# List of variables to check
+vars_to_check <- c("Summed.MET.minutes.per.week.for.all.activity", "age_at_diagnosis", "Townsend.deprivation.index.at.recruitment")
+
+# Call the function
+plot_ggcoxfunctional(data_m, "time", "event", vars_to_check)
+
+```
+
+### Kaplan-Meier Analysis
+
+```{r}
+# create survival object
+surv_object <- Surv(data_f$time, data_f$event)
+
+# fit a Kaplan-Meier survival curve
+kaplan_meier_fit_f <- survfit(surv_object ~ cluster, data = data_f)
+# get the summary of the fit
+summary(kaplan_meier_fit_f)
+# plot the curves
+ggsurvplot(kaplan_meier_fit_f, data = data_f, pval = TRUE, ylim = c(0.90, 1), xlab = "Months", ylab = "Probability for survival \n without unspecified dementia") 
+
+```
+
+```{r}
+# create survival object
+surv_object <- Surv(data_m$time, data_m$event)
+
+# fit a Kaplan-Meier survival curve
+kaplan_meier_fit_m <- survfit(surv_object ~ cluster, data = data_m)
+# get the summary of the fit
+summary(kaplan_meier_fit_m)
+# plot the curves 
+ggsurvplot(kaplan_meier_fit_m, data = data_m, pval = TRUE, ylim = c(0.90, 1), xlab = "Months", ylab = "Probability for survival \n without unspecified dementia") 
+```
+
+### Model 1 - Baseline
+
+```{r}
+# set 'Obesity-related' 'Lipid-related' as the reference category for the female and male data
+data_f$cluster <- relevel(factor(data_f$cluster), ref = "Obesity-related")
+data_m$cluster <- relevel(factor(data_m$cluster), ref = "Lipid-related")
+```
+
+```{r}
+# fit cox proportional hazard with cluster as confounder and get a summary of the model
+cox_model_1f <- coxph(Surv(time, event) ~ cluster, data = data_f)
+summary(cox_model_1f)
+
+# Generate survival curves stratified by the cluster variable
+surv_fit_1f <- survfit(Surv(time, event) ~ cluster, data = data_f)
+
+# Plot the survival curves
+ggsurvplot(
+  surv_fit_1f, 
+  data = data_f, 
+  pval = TRUE, 
+  conf.int = TRUE, 
+  risk.table = TRUE, 
+  legend.title = "Cluster", 
+  legend.labs = levels(data_f$cluster),
+  ggtheme = theme_minimal(),
+  ylim = c(0.85, 1)
+)
+
+# fit cox proportional hazard with cluster as confounder and get a summary of the model
+cox_model_1m <- coxph(Surv(time, event) ~ cluster, data = data_m)
+summary(cox_model_1m)
+
+# Generate survival curves stratified by the cluster variable
+surv_fit_1m <- survfit(Surv(time, event) ~ cluster, data = data_m)
+
+# Plot the survival curves
+ggsurvplot(
+  surv_fit_1m, 
+  data = data_m, 
+  pval = TRUE, 
+  conf.int = TRUE, 
+  risk.table = TRUE, 
+  legend.title = "Cluster", 
+  legend.labs = levels(data_m$cluster),
+  ggtheme = theme_minimal(),
+  ylim = c(0.85, 1)
+)
+```
+
+### Model 2 - Demographic factors
+
+```{r}
+# Define the columns to convert to factors
+cols_to_factor <- c('Education', 'Smoking.status', 'Alcohol.intake.frequency', 'cardiovascular_risk_factors', 'medication_use', 'cormobidities')
+
+# Convert specified columns to factors in data_f and data_m
+data_f[cols_to_factor] <- lapply(data_f[cols_to_factor], as.factor)
+data_m[cols_to_factor] <- lapply(data_m[cols_to_factor], as.factor)
+
+# rename for plot purposes
+names(data_f)[names(data_f) == "age_at_diagnosis"] <- "Age"
+names(data_f)[names(data_f) == "Townsend.deprivation.index.at.recruitment"] <- "Townsend.deprivation.index"
+names(data_f)[names(data_f) == "Alcohol.intake.frequency"] <- "Alcohol.intake"
+
+```
+
+```{r}
+# Fit the Cox proportional hazards model and get its summary
+cox_model_2f <- coxph(Surv(time, event) ~ cluster + Age + Education + Townsend.deprivation.index + Smoking.status + Alcohol.intake + Summed.MET.minutes.per.week.for.all.activity, data = data_f)
+summary(cox_model_2f)
+
+# Fit the Cox proportional hazards model and get its summary
+cox_model_2m <- coxph(Surv(time, event) ~ cluster + age_at_diagnosis + Education + Townsend.deprivation.index.at.recruitment + Smoking.status + Alcohol.intake.frequency + Summed.MET.minutes.per.week.for.all.activity, data = data_m)
+summary(cox_model_2m)
+
+```
+
+### Model 3 - Health-related factors
+
+```{r}
+
+# Fit the Cox proportional hazards model and get its summary
+cox_model_3f <- coxph(Surv(time, event) ~ cluster + Age + Education + Townsend.deprivation.index + Smoking.status + Alcohol.intake + Summed.MET.minutes.per.week.for.all.activity + medication_use + cormobidities, data = data_f)
+summary(cox_model_3f)
+
+# Fit the Cox proportional hazards model and get its summary
+cox_model_3m <- coxph(Surv(time, event) ~ cluster + age_at_diagnosis + Education + Townsend.deprivation.index.at.recruitment + Smoking.status + Alcohol.intake.frequency + Summed.MET.minutes.per.week.for.all.activity + medication_use + cormobidities , data = data_m)
+summary(cox_model_3m)
+
+```
+
+### Model 4 - PRS
+
+```{r}
+# Fit the Cox proportional hazards model and get its summary
+cox_model_4f <- coxph(Surv(time, event) ~ cluster + Age_bins + Education + Townsend_bins + Smoking.status + Alcohol.intake + Activity_bins + medication_use + cormobidities + Standard.PRS.for.type.2.diabetes..T2D., data = data_f)
+summary(cox_model_4f)
+
+# Fit the Cox proportional hazards model and get its summary
+cox_model_4m <- coxph(Surv(time, event) ~ cluster + age_at_diagnosis + Education + Townsend.deprivation.index.at.recruitment + Smoking.status + Alcohol.intake.frequency + Summed.MET.minutes.per.week.for.all.activity + medication_use + cormobidities + Standard.PRS.for.type.2.diabetes..T2D., data = data_m)
+summary(cox_model_4m)
+
+```
+
+### Proportional hazard assumption check
+
+```{r}
+
+# Check proportional hazards assumption using Schoenfeld residuals
+cox_res_f <- cox.zph(cox_model_4f)
+cox_res_f
+
+cox_res_m <- cox.zph(cox_model_4m)
+cox_res_m
+
+# Plot Schoenfeld residuals
+#plot(cox_res, var = "cluster")
+```
+
+# Cox-regression models - Vascular dementia
+
+### Kaplan-Meier Analysis
+
+```{r}
+# create survival object
+surv_object <- Surv(data_f$time_vascular_dementia, data_f$event_vascular_dementia)
+
+# fit a Kaplan-Meier survival curve
+kaplan_meier_fit_f <- survfit(surv_object ~ cluster, data = data_f)
+# get the summary of the fit
+summary(kaplan_meier_fit_f)
+# plot the curves
+ggsurvplot(kaplan_meier_fit_f, data = data_f, pval = TRUE, ylim = c(0.90, 1), xlab = "Months", ylab = "Probability for survival \n without vascular dementia") 
+
+```
+
+```{r}
+# create survival object
+surv_object <- Surv(data_m$time_vascular_dementia, data_m$event_vascular_dementia)
+
+# fit a Kaplan-Meier survival curve
+kaplan_meier_fit_m <- survfit(surv_object ~ cluster, data = data_m)
+# get the summary of the fit
+summary(kaplan_meier_fit_m)
+# plot the curves
+ggsurvplot(kaplan_meier_fit_m, data = data_m, pval = TRUE, ylim = c(0.90, 1), xlab = "Months", ylab = "Probability for survival \n without vascular dementia") 
+```
+
+### Model 1 - Baseline
+
+```{r}
+
+# fit cox proportional hazard with cluster as confounder and get a summary of the model
+cox_model_1f_vas <- coxph(Surv(time_vascular_dementia, event_vascular_dementia) ~ cluster, data = data_f)
+summary(cox_model_1f_vas)
+
+# Generate survival curves stratified by the cluster variable
+surv_fit_1f_vas <- survfit(Surv(time_vascular_dementia, event_vascular_dementia) ~ cluster, data = data_f)
+
+# Plot the survival curves
+ggsurvplot(
+  surv_fit_1f_vas, 
+  data = data_f, 
+  pval = TRUE, 
+  conf.int = TRUE, 
+  risk.table = TRUE, 
+  legend.title = "Cluster", 
+  legend.labs = levels(data_f$cluster),
+  ggtheme = theme_minimal()
+)
+
+# fit cox proportional hazard with cluster as confounder and get a summary of the model
+cox_model_1m_vas <- coxph(Surv(time_vascular_dementia, event_vascular_dementia) ~ cluster, data = data_m)
+summary(cox_model_1m_vas)
+
+# Generate survival curves stratified by the cluster variable
+surv_fit_1m_vas <- survfit(Surv(time_vascular_dementia, event_vascular_dementia) ~ cluster, data = data_m)
+
+# Plot the survival curves
+ggsurvplot(
+  surv_fit_1m_vas, 
+  data = data_m, 
+  pval = TRUE, 
+  conf.int = TRUE, 
+  risk.table = TRUE, 
+  legend.title = "Cluster", 
+  legend.labs = levels(data_m$cluster),
+  ggtheme = theme_minimal(),
+  ylim = c(0.85, 1)
+)
+```
+
+### Model 2 - Demographic factors
+
+```{r}
+# Fit the Cox proportional hazards model and get its summary
+cox_model_2f_vas <- coxph(Surv(time_vascular_dementia, event_vascular_dementia) ~ cluster + Age + Education + Townsend.deprivation.index + Smoking.status + Alcohol.intake + Summed.MET.minutes.per.week.for.all.activity, data = data_f)
+summary(cox_model_2f_vas)
+
+
+
+
+# Fit the Cox proportional hazards model and get its summary
+cox_model_2m_vas <- coxph(Surv(time_vascular_dementia, event_vascular_dementia) ~ cluster + age_at_diagnosis + Education + Townsend.deprivation.index.at.recruitment + Smoking.status + Alcohol.intake.frequency + Summed.MET.minutes.per.week.for.all.activity, data = data_m)
+summary(cox_model_2m_vas)
+
+
+```
+
+### Model 3 - Health-related factors
+
+```{r}
+# Fit the Cox proportional hazards model and get its summary
+cox_model_3f_vas <- coxph(Surv(time_vascular_dementia, event_vascular_dementia) ~ cluster + Age + Education + Townsend.deprivation.index + Smoking.status + Alcohol.intake + Summed.MET.minutes.per.week.for.all.activity + medication_use + cormobidities, data = data_f)
+summary(cox_model_3f_vas)
+
+
+
+# Fit the Cox proportional hazards model and get its summary
+cox_model_3m_vas <- coxph(Surv(time_vascular_dementia, event_vascular_dementia) ~ cluster + age_at_diagnosis + Education + Townsend.deprivation.index.at.recruitment + Smoking.status + Alcohol.intake.frequency + Summed.MET.minutes.per.week.for.all.activity + medication_use + cormobidities , data = data_m)
+summary(cox_model_3m_vas)
+
+
+
+```
+
+### Model 4 - PRS
+
+```{r}
+# Fit the Cox proportional hazards model and get its summary
+cox_model_4f_vas <- coxph(Surv(time_vascular_dementia, event_vascular_dementia) ~ cluster + Age + Education + Townsend.deprivation.index + Smoking.status + Alcohol.intake + Summed.MET.minutes.per.week.for.all.activity + medication_use + cormobidities + Standard.PRS.for.type.2.diabetes..T2D., data = data_f)
+summary(cox_model_4f_vas)
+
+
+# Fit the Cox proportional hazards model and get its summary
+cox_model_4m_vas <- coxph(Surv(time_vascular_dementia, event_vascular_dementia) ~ cluster + age_at_diagnosis + Education + Townsend.deprivation.index.at.recruitment + Smoking.status + Alcohol.intake.frequency + Summed.MET.minutes.per.week.for.all.activity + medication_use + cormobidities + Standard.PRS.for.type.2.diabetes..T2D., data = data_m)
+summary(cox_model_4m_vas)
+
+
+```
+
+### Proportional hazard assumption checks
+
+```{r}
+# Check proportional hazards assumption using Schoenfeld residuals
+cox_res_f_vas <- cox.zph(cox_model_4f_vas)
+cox_res_f_vas
+
+cox_res_m_vas <- cox.zph(cox_model_4m_vas)
+cox_res_m_vas
+
+# Plot Schoenfeld residuals
+#plot(cox_res, var = "cluster")
+```
+
+# Cox-regression models - alzheimers
+
+### Kaplan-Meier Analysis
+
+```{r}
+surv_object <- Surv(data_f$time_alzheimers_disease, data_f$event_alzheimers_disease)
+kaplan_meier_fit_f <- survfit(surv_object ~ cluster, data = data_f)
+summary(kaplan_meier_fit_f)
+
+#ggsurvplot(kaplan_meier_fit_f, data = data_f, pval = TRUE) 
+ggsurvplot(kaplan_meier_fit_f, data = data_f, pval = TRUE, ylim = c(0.90, 1), xlab = "Months", ylab = "Probability for survival \n without Alzheimer's disease") 
+
+```
+
+```{r}
+surv_object <- Surv(data_m$time_alzheimers_disease, data_m$event_alzheimers_disease)
+kaplan_meier_fit_m <- survfit(surv_object ~ cluster, data = data_m)
+summary(kaplan_meier_fit_m)
+
+#ggsurvplot(kaplan_meier_fit_m, data = data_m, pval = TRUE) 
+ggsurvplot(kaplan_meier_fit_m, data = data_m, pval = TRUE, ylim = c(0.90, 1), xlab = "Months", ylab = "Probability for survival \n without Alzheimer's disease") 
+```
+
+### Model 1 - Baseline
+
+```{r}
+# fit cox proportional hazard with cluster as confounder and get a summary of the model
+cox_model_1f_alz <- coxph(Surv(time_alzheimers_disease, event_alzheimers_disease) ~ cluster, data = data_f)
+summary(cox_model_1f_alz)
+
+# Generate survival curves stratified by the cluster variable
+surv_fit_1f_alz <- survfit(Surv(time_alzheimers_disease, event_alzheimers_disease) ~ cluster, data = data_f)
+
+# Plot the survival curves
+ggsurvplot(
+  surv_fit_1f_alz, 
+  data = data_f, 
+  pval = TRUE, 
+  conf.int = TRUE, 
+  risk.table = TRUE, 
+  legend.title = "Cluster", 
+  legend.labs = levels(data_f$cluster),
+  ggtheme = theme_minimal()
+)
+
+# fit cox proportional hazard with cluster as confounder and get a summary of the model
+cox_model_1m_alz <- coxph(Surv(time_alzheimers_disease, event_alzheimers_disease) ~ cluster, data = data_m)
+summary(cox_model_1m_alz)
+
+# Generate survival curves stratified by the cluster variable
+surv_fit_1m_alz <- survfit(Surv(time_alzheimers_disease, event_alzheimers_disease) ~ cluster, data = data_m)
+
+# Plot the survival curves
+ggsurvplot(
+  surv_fit_1m_alz, 
+  data = data_m, 
+  pval = TRUE, 
+  conf.int = TRUE, 
+  risk.table = TRUE, 
+  legend.title = "Cluster", 
+  legend.labs = levels(data_m$cluster),
+  ggtheme = theme_minimal(),
+  ylim = c(0.85, 1)
+)
+```
+
+### Model 2 - Demographic factors
+
+```{r}
+# Fit the Cox proportional hazards model and get its summary
+cox_model_2f_alz <- coxph(Surv(time_alzheimers_disease, event_alzheimers_disease) ~ cluster + Age + Education + Townsend.deprivation.index + Smoking.status + Alcohol.intake + Summed.MET.minutes.per.week.for.all.activity, data = data_f)
+summary(cox_model_2f_alz)
+
+# Fit the Cox proportional hazards model and get its summary
+cox_model_2m_alz <- coxph(Surv(time_alzheimers_disease, event_alzheimers_disease) ~ cluster + age_at_diagnosis + Education + Townsend.deprivation.index.at.recruitment + Smoking.status + Alcohol.intake.frequency + Summed.MET.minutes.per.week.for.all.activity, data = data_m)
+summary(cox_model_2m_alz)
+
+```
+
+### Model 3 - Health-related factors
+
+```{r}
+# Fit the Cox proportional hazards model and get its summary
+cox_model_3f_alz <- coxph(Surv(time_alzheimers_disease, event_alzheimers_disease) ~ cluster + Age + Education + Townsend.deprivation.index + Smoking.status + Alcohol.intake + Summed.MET.minutes.per.week.for.all.activity + medication_use + cormobidities, data = data_f)
+summary(cox_model_3f_alz)
+
+
+# Fit the Cox proportional hazards model and get its summary
+cox_model_3m_alz <- coxph(Surv(time_alzheimers_disease, event_alzheimers_disease) ~ cluster + age_at_diagnosis + Education + Townsend.deprivation.index.at.recruitment + Smoking.status + Alcohol.intake.frequency + Summed.MET.minutes.per.week.for.all.activity + medication_use + cormobidities , data = data_m)
+summary(cox_model_3m_alz)
+
+```
+
+### Model 4 - PRS
+
+```{r}
+# Fit the Cox proportional hazards model and get its summary
+cox_model_4f_alz <- coxph(Surv(time_alzheimers_disease, event_alzheimers_disease) ~ cluster + Age + Education + Townsend.deprivation.index + Smoking.status + Alcohol.intake + Summed.MET.minutes.per.week.for.all.activity + medication_use + cormobidities + Standard.PRS.for.type.2.diabetes..T2D., data = data_f)
+summary(cox_model_4f_alz)
+
+
+# Fit the Cox proportional hazards model and get its summary
+cox_model_4m_alz <- coxph(Surv(time_alzheimers_disease, event_alzheimers_disease) ~ cluster + age_at_diagnosis + Education + Townsend.deprivation.index.at.recruitment + Smoking.status + Alcohol.intake.frequency + Summed.MET.minutes.per.week.for.all.activity + medication_use + cormobidities + Standard.PRS.for.type.2.diabetes..T2D., data = data_m)
+summary(cox_model_4m_alz)
+
+```
+
+### Proportional hazard assumption check
+
+```{r}
+# Check proportional hazards assumption using Schoenfeld residuals
+cox_res_f_alz <- cox.zph(cox_model_4f_alz)
+cox_res_f_alz
+
+cox_res_m_alz <- cox.zph(cox_model_4m_alz)
+cox_res_m_alz
+
+# Plot Schoenfeld residuals
+#plot(cox_res, var = "cluster")
+```
+
+# Result plots of Cox regression models
+
+```{r}
+# panel for the table/plot
+panels <- list(
+  list(width = 0.03),
+  list(width = 0.1, display = ~level, heading = "T2D sub-phenotypes"), # display variables
+  list(width = 0.05, display = ~n, hjust = 1, heading = "n"), # display number of observations
+  list(width = 0.03, item = "vline", hjust = 0.5),
+  list(width = 0.55, item = "forest", hjust = 0.5, linetype = "dashed", heading = "Hazard Ratio", line_x = 0 # display forest plot
+  ),
+  list(width = 0.03, item = "vline", hjust = 0.5),
+  list(
+    width = 0.12,     display = ~ ifelse(reference, "Ref", sprintf(
+      "%0.2f (%0.2f, %0.2f)", # display hazard ratio and CI
+      trans(estimate), trans(conf.low), trans(conf.high)
+    )),
+    display_na = NA,
+    heading = " HR (95% CI)"  # Set the heading here for HR values
+  ),
+  list(
+    width = 0.05,
+    display = ~ ifelse(reference, "", format.pval(p.value, digits = 1, eps = 0.001)), # display p-values
+    display_na = NA,
+    hjust = 1,
+    heading = "p-value"
+  ),
+  list(width = 0.03)
+)
+
+```
+
+### All-cause dementia
+
+```{r}
+
+# create a list with al models for all_cause dementia (female)
+models_f <- list(
+  "Model 1" = cox_model_1f,
+  "Model 2" = cox_model_2f,
+  "Model 3" = cox_model_3f,
+  "Model 4" = cox_model_4f
+)
+
+# Generate the forest plot for the cluster variable 
+forest_model(model_list = models_f, covariates = "cluster", panels = panels)
+
+
+# create a list with al models for all_cause dementia (male)
+models_m <- list(
+  "Model 1" = cox_model_1m,
+  "Model 2" = cox_model_2m,
+  "Model 3" = cox_model_3m,
+  "Model 4" = cox_model_4m
+)
+
+# Generate the forest plot for the cluster variable 
+forest_model(model_list = models_m, covariates = "cluster", panels = panels)
+```
+
+### Vascular dementia
+
+```{r}
+
+# create a list with al models for vascular dementia (female)
+models_f_vas <- list(
+  "Model 1" = cox_model_1f_vas,
+  "Model 2" = cox_model_2f_vas,
+  "Model 3" = cox_model_3f_vas,
+  "Model 4" = cox_model_4f_vas
+)
+
+# Generate the forest plot for the cluster variable 
+forest_model(model_list = models_f_vas, covariates = "cluster", panels = panels)
+
+
+# create a list with al models for vascular dementia (male)
+models_m_vas <- list(
+  "Model 1" = cox_model_1m_vas,
+  "Model 2" = cox_model_2m_vas,
+  "Model 3" = cox_model_3m_vas,
+  "Model 4" = cox_model_4m_vas
+)
+
+# Generate the forest plot for the cluster variable 
+forest_model(model_list = models_m_vas, covariates = "cluster", panels = panels)
+```
+
+### Alzheimer's disease
+
+```{r}
+
+# create a list with al models for alzheimers disease (female)
+models_f_alz <- list(
+  "Model 1" = cox_model_1f_alz,
+  "Model 2" = cox_model_2f_alz,
+  "Model 3" = cox_model_3f_alz,
+  "Model 4" = cox_model_4f_alz
+)
+
+# Generate the forest plot for the cluster variable 
+forest_model(model_list = models_f_alz, covariates = "cluster", panels = panels)
+
+
+# create a list with al models for alzheimers disease (male)
+models_m_alz <- list(
+  "Model 1" = cox_model_1m_alz,
+  "Model 2" = cox_model_2m_alz,
+  "Model 3" = cox_model_3m_alz,
+  "Model 4" = cox_model_4m_alz
+)
+
+# Generate the forest plot for the cluster variable 
+forest_model(model_list = models_m_alz, covariates = "cluster", panels = panels)
+```
+
+# Extra analysis
+
+The number and percentages of the events are determined:
+
+```{r}
+event_table_f <- table(data_f$event)
+event_table_m <- table(data_m$event)
+
+
+event_percentages_f <- prop.table(event_table_f) * 100
+event_percentages_m <- prop.table(event_table_m) * 100
+
+event_table_f
+event_percentages_f
+
+event_table_m
+event_percentages_m
+```
+
+```{r}
+event_table_f_vas <- table(data_f$event_vascular_dementia)
+event_table_m_vas <- table(data_m$event_vascular_dementia)
+
+
+event_percentages_f_vas <- prop.table(event_table_f_vas) * 100
+event_percentages_m_vas <- prop.table(event_table_m_vas) * 100
+
+event_table_f_vas
+event_percentages_f_vas
+
+event_table_m_vas
+event_percentages_m_vas
+```
+
+```{r}
+event_table_f_alz <- table(data_f$event_alzheimers_disease)
+event_table_m_alz <- table(data_m$event_alzheimers_disease)
+
+
+event_percentages_f_alz <- prop.table(event_table_f_alz) * 100
+event_percentages_m_alz <- prop.table(event_table_m_alz) * 100
+
+event_table_f_alz
+event_percentages_f_alz
+
+event_table_m_alz
+event_percentages_m_alz
+```
